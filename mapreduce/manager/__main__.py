@@ -11,7 +11,7 @@ import mapreduce.utils
 # Configure logging
 LOGGER = logging.getLogger(__name__)
 
-
+#All communication done with strings formatted using JSON
 class Manager:
     """Represent a MapReduce framework Manager node."""
 
@@ -53,6 +53,27 @@ def main(host, port, hb_port):
     root_logger.setLevel(logging.INFO)
     Manager(host, port, hb_port)
 
+    """
+    On startup manager should:
+    
+    Create new folder temp store all files used by mapreduce server) 
+    (if already exists keep it (mkdir) ) (Hints on slash an glob in spec)
+
+    Create new thread to listen for UDP heartbeat from workers
+
+    Create additional processing threads we need (fault tolerance also)
+
+    Create TCP socket on given port and call listen()
+    (only one listen() thread for lifetime of manager)
+
+    Wait for incoming messages, ignore invalid (invalid is fail JSON Decoding)
+    try:
+        msg = json.loads(msg)
+    except JSONDecodeError:
+        continue
+
+    Return from Manager constructor when all threads have exited
+    """
 
 if __name__ == '__main__':
     main()

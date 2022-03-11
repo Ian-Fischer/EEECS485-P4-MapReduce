@@ -1,0 +1,36 @@
+MANAGER
+Initialization
+- create a directory that the work will be saved Initialization
+- set up threads and sockets
+    threads:
+        - main
+        - heartbeat thread to check on the Workers
+        - additional threads for work?
+    sockets:
+        - UDP for listening to the heartbeats of the workers
+        - TCP for receiving information about MapReduce problems, sending info to workers
+
+Registration
+- keep track of the state of all workers (worker class?)
+- send back an acknowledgement when registration message received
+
+Fault Taulerance 
+- 5 heartbeats missed (10 seconds passed) mark worker as dead and reassign the tasks
+
+
+WORKER
+Initialization
+set up threads, sockets
+    threads: 
+        - main
+        - heartbeat thread to send to the Manager
+    sockets:
+        - UDP to send heartbeat
+        - TCP for jobs and associated files
+
+Registration
+- send registration message to manager once running
+- start a heartbeat once the ack is received
+
+Fault Taulerance 
+- send heartbeat to manager every 2 seconds

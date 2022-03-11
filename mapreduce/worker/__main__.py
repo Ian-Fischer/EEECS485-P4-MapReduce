@@ -58,6 +58,23 @@ def main(host, port, manager_host, manager_port, manager_hb_port):
     root_logger.setLevel(logging.INFO)
     Worker(host, port, manager_host, manager_port, manager_hb_port)
 
+    """
+        On startup worker should:
+
+        Create a TCP socket on the port and call listen()
+        (Only one listen() for lifetime of worker)
+        ignore invalid (invalid is fail JSON Decoding)
+        try:
+            msg = json.loads(msg)
+        except JSONDecodeError:
+            continue
+
+        Send register message to manager (listening before sending this message)
+
+        when recieve Register_ack message, create a new thread for heartbeat messages (send to manager)
+
+        (Manager should ignore heartbeat from unregistered worker)
+    """
 
 if __name__ == '__main__':
     main()
