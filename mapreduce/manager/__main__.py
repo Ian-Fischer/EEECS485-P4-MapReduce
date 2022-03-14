@@ -7,7 +7,7 @@ import logging
 import json
 import time
 import click
-from mapreduce.utils import tcp_server, udp_server
+from mapreduce.utils import tcp_client, tcp_server, udp_server
 from threading import Thread
 
 """
@@ -92,11 +92,28 @@ class Manager:
                         ft_thread.start()
                         worker['status'] = 'dead'
     
+
     def manager_fault():
         """Fault tolerance for managers."""
         print('implement me')
-                    
-                
+
+
+    def manager_shutdown():
+        """Shutdown manager."""
+        # send shutdown to all registered workers
+        msg = {
+            'message_type': 'shutdown'
+        }
+        for worker in Manager.workers:
+            # get workers host and port
+            server_host, server_port = worker['host'], worker['port']
+            # send the message
+            tcp_client(server_host=server_host, server_port=server_port, msg=msg)
+        # kill the manager process
+        # TODO: make sure this is the right way to end a process
+        sys.exit()
+
+
 @click.command()
 @click.option("--host", "host", default="localhost")
 @click.option("--port", "port", default=6000)

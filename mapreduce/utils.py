@@ -7,8 +7,10 @@ Socket stuff
 import socket
 import json
 from threading import Thread
+import time 
 
 def tcp_client(server_host, server_port, msg):
+    """Send a message to server_host at server_port."""
     # create an INET, STREAMing socket, this is TCP
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # connect to the server
@@ -34,7 +36,7 @@ def udp_client(server_host, server_port, worker_host, worker_port):
             sock.sendall(message.encode('utf-8'))
         Thread.sleep(2)
 
-def tcp_server(host,port,threads = None, manager_host = None, manager_hb_port = None):
+def tcp_server(host,port,is_worker):
     # Create an INET, STREAMing socket, this is TCP
     # Note: context manager syntax allows for sockets to automatically be closed when an exception is raised or control flow returns.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -75,16 +77,10 @@ def tcp_server(host,port,threads = None, manager_host = None, manager_hb_port = 
                 message_dict = json.loads(message_str)
             except json.JSONDecodeError:
                 continue
-            print(message_dict)
-            if message_dict["message_type"] == "register_ack":
-                hb_thread = Thread(target=udp_client, args = (manager_host, manager_hb_port))
-                threads.append(hb_thread)
-                hb_thread.start()
-{
-  "message_type": "register_ack",
-  "worker_host": string,
-  "worker_port": int,
-}
+
+            handle_message(message_dict, is_worker)
+
+            
 
 
 def udp_server(host, port, workers):
@@ -114,3 +110,28 @@ def udp_server(host, port, workers):
                 continue
             workers[key]['last_checkin'] = time.time()
             print(message_dict)
+
+def handle_message(message_dict, is_worker):
+    if (is_worker):
+
+        if("""register acknolwedgment"""):
+            manager_ack("""FILL IN""")
+        
+        if message_dict["message_type"] == "shutdown":
+            worker_shutdown("""FILL IN""")
+
+        if message_dict["message_type"] == "register_ack":
+            worker_heartbeat()
+            #THIS STUFF INSIDE FUNCTION
+                hb_thread = Thread(target=udp_client, args = (manager_host, manager_hb_port))
+                threads.append(hb_thread)
+                hb_thread.start()
+        
+    else:
+        if("""registration"""):
+            worker_registration("""FILL IN""")
+
+        if("""is shutdown message"""):
+            manager_shutdown("""FILL IN""")
+
+        
