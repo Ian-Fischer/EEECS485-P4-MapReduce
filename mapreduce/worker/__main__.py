@@ -52,13 +52,10 @@ class Worker:
 
         (Manager should ignore heartbeat from unregistered worker)
         """
-        # create a TCP socket and listen()
-        # create hb_thread in tcp_server helpter function
-        args = (host,port,threads,manager_host,manager_hb_port)
-        listen_thread = Thread(target = tcp_server, args = args)
-        threads.append(listen_thread)
-        listen_thread.start()
-
+        # start listening for the ack
+        args = (host,port,threads,manager_host,manager_hb_port,)
+        listen = Thread(target=tcp_server, args=args)
+        listen.start()
         # send the register message to the manager
         reg_msg = {
             "message_type" : "register",
@@ -66,8 +63,21 @@ class Worker:
             "worker_port" : port
         }
         tcp_client(manager_host, manager_port, reg_msg)
+        # don't do anything until we get the ack
+        msg_dict = listen.join() # c
+
+        while msg_dict['message_type'] != "shutdown":
+            msg_dict = tcp_server(host,port,threads,manager_host,manager_hb_port,)
+
+        # implement shutdown
+        shutdown()
 
         time.sleep(120)
+
+    def shutdown():
+        """Shutdown the Worker after shutdown message received."""
+        # once we receive the 
+
 
 
 @click.command()

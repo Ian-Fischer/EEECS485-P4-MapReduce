@@ -77,12 +77,9 @@ def tcp_server(host,port,is_worker):
                 message_dict = json.loads(message_str)
             except json.JSONDecodeError:
                 continue
-
-            handle_message(message_dict, is_worker)
+            return message_dict
 
             
-
-
 def udp_server(host, port, workers):
     # Create an INET, DGRAM socket, this is UDP
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -111,27 +108,5 @@ def udp_server(host, port, workers):
             workers[key]['last_checkin'] = time.time()
             print(message_dict)
 
-def handle_message(message_dict, is_worker):
-    if (is_worker):
-
-        if("""register acknolwedgment"""):
-            manager_ack("""FILL IN""")
-        
-        if message_dict["message_type"] == "shutdown":
-            worker_shutdown("""FILL IN""")
-
-        if message_dict["message_type"] == "register_ack":
-            worker_heartbeat()
-            #THIS STUFF INSIDE FUNCTION
-                hb_thread = Thread(target=udp_client, args = (manager_host, manager_hb_port))
-                threads.append(hb_thread)
-                hb_thread.start()
-        
-    else:
-        if("""registration"""):
-            worker_registration("""FILL IN""")
-
-        if("""is shutdown message"""):
-            manager_shutdown("""FILL IN""")
 
         

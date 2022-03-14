@@ -57,6 +57,7 @@ class Manager:
 
         threads: [hb_thread, listen_thread, ft_thread]
         """
+        dead = False
         # set up tmp directory in mapreduce (mapreduce/tmp)
         tmp_path = pathlib.Path(__file__).parents[1] / "tmp"
         tmp_path.mkdir(exist_ok=True)
@@ -65,15 +66,21 @@ class Manager:
             file.unlink()
         # set up 
         # spwan heart beat thread
-        hb_thread = Thread(target=Manager.heartbeats)
+        hb_thread = Thread(target=Manager.check_heartbeats)
         threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
-        listen_thread = Thread(target=tcp_server, args= (host,port))
-        threads.append(listen_thread)
-        listen_thread.start()
+        while not dead:
+            msg_dict = tcp_server(host,port)
+            # do something with the message
+            if msg_dict['message_type'] == 'shutdown':
+                shutdown(msg_dict)
+                dead = True
+            elif msg_dict["message_type"] == "register":
+                register_worker("""FILL IN""")
 
-    def heartbeats():
+
+    def check_heartbeats():
         """Check for worker heartbeats on UDP."""
         # launch thread to listen for heartbeats and update last_checkin
         args = (Manager.host, Manager.hb_port, Manager.workers)
@@ -92,6 +99,8 @@ class Manager:
                         ft_thread.start()
                         worker['status'] = 'dead'
     
+    def register_worker(msg_dict):
+        """Add worker to manager's worker dict"""
 
     def manager_fault():
         """Fault tolerance for managers."""
@@ -104,11 +113,12 @@ class Manager:
         msg = {
             'message_type': 'shutdown'
         }
-        for worker in Manager.workers:
+        for key in Manager.workers.keys():
             # get workers host and port
-            server_host, server_port = worker['host'], worker['port']
+            server_host, server_port = key[0], key[1]
             # send the message
             tcp_client(server_host=server_host, server_port=server_port, msg=msg)
+            Manager.workers[key]['status'] = 'dead'
         # kill the manager process
         # TODO: make sure this is the right way to end a process
         sys.exit()
