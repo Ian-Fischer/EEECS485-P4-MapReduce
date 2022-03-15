@@ -71,7 +71,7 @@ class Worker:
             reg_thread.start()
             msg_dict = tcp_server(sock) #get the acknowledgement
 
-            hb_thread = Thread(target=Manager.check_heartbeats)
+            hb_thread = Thread(target=Manager.heartbeat)
             threads.append(hb_thread)
             hb_thread.start()
 
