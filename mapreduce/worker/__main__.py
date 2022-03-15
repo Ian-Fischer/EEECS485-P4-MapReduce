@@ -52,31 +52,41 @@ class Worker:
 
         (Manager should ignore heartbeat from unregistered worker)
         """
-        # start listening for the ack
-        args = (host,port,threads,manager_host,manager_hb_port,)
-        listen = Thread(target=tcp_server, args=args)
-        listen.start()
-        # send the register message to the manager
-        reg_msg = {
-            "message_type" : "register",
-            "worker_host" : host,
-            "worker_port" : port
-        }
-        tcp_client(manager_host, manager_port, reg_msg)
-        # don't do anything until we get the ack
-        msg_dict = listen.join() # c
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # Bind the socket to the server
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            sock.listen()
+            # Socket accept() and recv() will block for a maximum of 1 second.  If you
+            # omit this, it blocks indefinitely, waiting for a connection.
+            sock.settimeout(1)
 
-        while msg_dict['message_type'] != "shutdown":
-            msg_dict = tcp_server(host,port,threads,manager_host,manager_hb_port,)
+            # send the register message to the manager
+            reg_msg = {
+                "message_type" : "register",
+                "worker_host" : host,
+                "worker_port" : port
+            }
+            reg_thread = Thread(target=tcp_client, args=(manager_host, manager_port, reg_msg,))
+            reg_thread.start()
+            msg_dict = tcp_server(sock) #get the acknowledgement
 
-        # implement shutdown
-        shutdown()
+            hb_thread = Thread(target=Manager.check_heartbeats)
+            threads.append(hb_thread)
+            hb_thread.start()
+
+
+            while msg_dict['message_type'] != "shutdown":
+                msg_dict = tcp_server(sock)
+
+            # implement shutdown
+            shutdown()
 
         time.sleep(120)
-
     def shutdown():
         """Shutdown the Worker after shutdown message received."""
         # once we receive the 
+
 
 
 

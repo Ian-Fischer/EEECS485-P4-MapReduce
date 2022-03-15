@@ -57,7 +57,6 @@ class Manager:
 
         threads: [hb_thread, listen_thread, ft_thread]
         """
-        dead = False
         # set up tmp directory in mapreduce (mapreduce/tmp)
         tmp_path = pathlib.Path(__file__).parents[1] / "tmp"
         tmp_path.mkdir(exist_ok=True)
@@ -70,14 +69,24 @@ class Manager:
         threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
-        while not dead:
-            msg_dict = tcp_server(host,port)
-            # do something with the message
-            if msg_dict['message_type'] == 'shutdown':
-                shutdown(msg_dict)
-                dead = True
-            elif msg_dict["message_type"] == "register":
-                register_worker("""FILL IN""")
+        # Create an INET, STREAMing socket, this is TCP
+        # Note: context manager syntax allows for sockets to automatically be closed when an exception is raised or control flow returns.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # Bind the socket to the server
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            sock.listen()
+            # Socket accept() and recv() will block for a maximum of 1 second.  If you
+            # omit this, it blocks indefinitely, waiting for a connection.
+            sock.settimeout(1)
+            while not dead:
+                message_dict = tcp_server(sock)
+                # do something with the message
+                if message_dict['message_type'] == 'shutdown':
+                    Manager.shutdown(message_dict)
+                    dead = True
+                elif message_dict["message_type"] == "register":
+                    Manager.register_worker("""FILL IN""")
 
 
     def check_heartbeats():
@@ -102,12 +111,12 @@ class Manager:
     def register_worker(msg_dict):
         """Add worker to manager's worker dict"""
 
-    def manager_fault():
+    def fault():
         """Fault tolerance for managers."""
         print('implement me')
 
 
-    def manager_shutdown():
+    def shutdown():
         """Shutdown manager."""
         # send shutdown to all registered workers
         msg = {
@@ -121,7 +130,6 @@ class Manager:
             Manager.workers[key]['status'] = 'dead'
         # kill the manager process
         # TODO: make sure this is the right way to end a process
-        sys.exit()
 
 
 @click.command()
