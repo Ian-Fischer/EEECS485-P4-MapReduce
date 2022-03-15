@@ -7,7 +7,7 @@ import logging
 import json
 import time
 import click
-from mapreduce.utils import tcp_client, tcp_server, udp_server
+from mapreduce.utils import tcp_client, tcp_server
 from threading import Thread
 
 """
@@ -39,14 +39,14 @@ LOGGER = logging.getLogger(__name__)
 class Manager:
     """Represent a MapReduce framework Manager node."""
     
-    def __init__(self, host, port, hb_port, workers, threads):
+    def __init__(self, host, port, hb_port):
         """Construct a Manager instance and start listening for messages."""
-
         LOGGER.info(
             "Starting manager host=%s port=%s hb_port=%s pwd=%s",
             host, port, hb_port, os.getcwd(),
         )
-
+        # set up dead variable to end threads
+        self.dead = False
         """
         workers: 
         (worker_host, worker_port) => 
@@ -57,6 +57,8 @@ class Manager:
 
         threads: [hb_thread, listen_thread, ft_thread]
         """
+        self.workers = {}
+        self.threads = []
         # set up tmp directory in mapreduce (mapreduce/tmp)
         tmp_path = pathlib.Path(__file__).parents[1] / "tmp"
         tmp_path.mkdir(exist_ok=True)
@@ -65,8 +67,8 @@ class Manager:
             file.unlink()
         # set up 
         # spwan heart beat thread
-        hb_thread = Thread(target=Manager.check_heartbeats)
-        threads.append(hb_thread)
+        hb_thread = Thread(target=self.check_heartbeats, args=(host, hb_port))
+        self.threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
         # Create an INET, STREAMing socket, this is TCP
@@ -79,34 +81,38 @@ class Manager:
             # Socket accept() and recv() will block for a maximum of 1 second.  If you
             # omit this, it blocks indefinitely, waiting for a connection.
             sock.settimeout(1)
-            while not dead:
+            while not self.dead:
                 message_dict = tcp_server(sock)
                 # do something with the message
                 if message_dict['message_type'] == 'shutdown':
-                    Manager.shutdown(message_dict)
-                    dead = True
-                elif message_dict["message_type"] == "register":
-                    Manager.register_worker("""FILL IN""")
+                    self.shutdown()
+                    self.dead = True
+                # elif message_dict["message_type"] == "register":
+                #     # self.register_worker()
+            print("end of listening for manager")
+
+            
 
 
-    def check_heartbeats():
+    def check_heartbeats(self, host, hb_port):
         """Check for worker heartbeats on UDP."""
         # launch thread to listen for heartbeats and update last_checkin
-        args = (Manager.host, Manager.hb_port, Manager.workers)
-        hb_listen_thread = Thread(target=udp_server, args = args) 
-        Manager.threads.append(hb_listen_thread)
+        args = (host, hb_port)
+        hb_listen_thread = Thread(target=self.udp_server, args=args) 
+        self.threads.append(hb_listen_thread)
         hb_listen_thread.start()
         # constantly checking for dead workers
         # launch the funeral thread if worker detected dead
-        while True:
+        while not self.dead:
             # update worker times and check for death
             curr_time = time.time()
-            for worker in Manager.workers:
+            for worker in self.workers:
                 if worker['status'] != 'dead':
                     if curr_time - worker['last_checkin'] > 12:
-                        ft_thread = Thread(target=Manager.manager_fault)
+                        ft_thread = Thread(target=self.fault)
                         ft_thread.start()
                         worker['status'] = 'dead'
+        print('end of check_heartbeats')
     
     def register_worker(msg_dict):
         """Add worker to manager's worker dict"""
@@ -115,19 +121,45 @@ class Manager:
         """Fault tolerance for managers."""
         print('implement me')
 
+    def udp_server(self, host, port):
+        # Create an INET, DGRAM socket, this is UDP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            # Bind the UDP socket to the server 
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            sock.settimeout(1)
+            # No sock.listen() since UDP doesn't establish connections like TCP
+            # Receive incoming UDP messages
+            while not self.dead:
+                try:
+                    message_bytes = sock.recv(4096)
+                except socket.timeout:
+                    continue
+                message_str = message_bytes.decode("utf-8")
+                try:
+                    message_dict = json.loads(message_str)
+                except json.JSONDecodeError:
+                    continue
+                # update the time that the worker last checked in
+                # ignore if not registered 
+                key = (message_dict['worker_host'], message_dict['worker_port'])
+                # ignore if not registered 
+                if key not in self.workers.keys():
+                    continue
+                self.workers[key]['last_checkin'] = time.time()
 
-    def shutdown():
+    def shutdown(self):
         """Shutdown manager."""
         # send shutdown to all registered workers
         msg = {
             'message_type': 'shutdown'
         }
-        for key in Manager.workers.keys():
+        for key in self.workers.keys():
             # get workers host and port
             server_host, server_port = key[0], key[1]
             # send the message
             tcp_client(server_host=server_host, server_port=server_port, msg=msg)
-            Manager.workers[key]['status'] = 'dead'
+            self.workers[key]['status'] = 'dead'
         # kill the manager process
         # TODO: make sure this is the right way to end a process
 
@@ -146,7 +178,7 @@ def main(host, port, hb_port):
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
-    Manager(host, port, hb_port, {})
+    Manager(host=host, port=port, hb_port=hb_port)
 
 if __name__ == '__main__':
     main()

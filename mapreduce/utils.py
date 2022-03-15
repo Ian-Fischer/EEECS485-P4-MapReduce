@@ -8,6 +8,9 @@ import socket
 import json
 from threading import Thread
 import time 
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 def tcp_client(server_host, server_port, msg):
     """Send a message to server_host at server_port."""
@@ -19,23 +22,6 @@ def tcp_client(server_host, server_port, msg):
         message = json.dumps(msg)
         sock.sendall(message.encode('utf-8'))
 
-def udp_client(server_host, server_port, worker_host, worker_port):
-    """Send worker heartbeats on UDP."""
-    heartbeat = {
-        "message_type": "heartbeat",
-        "worker_host": worker_host,
-        "worker_port": worker_port
-    }
-    while True:
-        # Create an INET, DGRAM socket, this is UDP
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            # Connect to the UDP socket on server
-            sock.connect((server_host, server_port))
-            # Send a message
-            message = json.dumps(heartbeat)
-            sock.sendall(message.encode('utf-8'))
-        Thread.sleep(2)
-
 def tcp_server(sock):
     """Function to run the infinite listen."""
     while True:
@@ -45,7 +31,7 @@ def tcp_server(sock):
             clientsocket, address = sock.accept()
         except socket.timeout:
             continue
-        print("Connection from", address[0])
+        #print("Connection from", address[0])
         # Receive data, one chunk at a time.  If recv() times out before we can
         # read a chunk, then go back to the top of the loop and try again.
         # When the client closes the connection, recv() returns empty data,
@@ -68,36 +54,10 @@ def tcp_server(sock):
             message_dict = json.loads(message_str)
         except json.JSONDecodeError:
             continue
+        print(message_dict)
         return message_dict
 
             
-def udp_server(host, port, workers):
-    # Create an INET, DGRAM socket, this is UDP
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        # Bind the UDP socket to the server 
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((host, port))
-        sock.settimeout(1)
-        # No sock.listen() since UDP doesn't establish connections like TCP
-        # Receive incoming UDP messages
-        while True:
-            try:
-                message_bytes = sock.recv(4096)
-            except socket.timeout:
-                continue
-            message_str = message_bytes.decode("utf-8")
-            try:
-                message_dict = json.loads(message_str)
-            except json.JSONDecodeError:
-                continue
-            # update the time that the worker last checked in
-            # ignore if not registered 
-            key = (message_dict['worker_host'], message_dict['worker_port'])
-            # ignore if not registered 
-            if key not in workers.keys():
-                continue
-            workers[key]['last_checkin'] = time.time()
-            print(message_dict)
 
 
         

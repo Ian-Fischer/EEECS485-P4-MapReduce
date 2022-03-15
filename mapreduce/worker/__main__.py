@@ -17,7 +17,7 @@ LOGGER = logging.getLogger(__name__)
 class Worker:
     """A class representing a worker node in a MapReduce cluster."""
     def __init__(self, host, port, manager_host, manager_port,
-                manager_hb_port, threads):
+                manager_hb_port):
         """Construct a Worker instance and start listening for messages."""
         LOGGER.info(
             "Starting worker host=%s port=%s pwd=%s",
@@ -27,14 +27,14 @@ class Worker:
             "manager_host=%s manager_port=%s manager_hb_port=%s",
             manager_host, manager_port, manager_hb_port,
         )
-
+        self.dead = False
         # This is a fake message to demonstrate pretty printing with logging
         message_dict = {
             "message_type": "register_ack",
             "worker_host": "localhost",
             "worker_port": 6001,
         }
-        LOGGER.debug("TCP recv\n%s", json.dumps(message_dict, indent=2))
+        print("TCP recv\n%s", json.dumps(message_dict, indent=2))
         """
         On startup worker should:
 
@@ -52,6 +52,7 @@ class Worker:
 
         (Manager should ignore heartbeat from unregistered worker)
         """
+        threads = []
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -67,25 +68,38 @@ class Worker:
                 "worker_host" : host,
                 "worker_port" : port
             }
-            reg_thread = Thread(target=tcp_client, args=(manager_host, manager_port, reg_msg,))
-            reg_thread.start()
-            msg_dict = tcp_server(sock) #get the acknowledgement
+            tcp_client(manager_host, manager_port, reg_msg)
 
-            hb_thread = Thread(target=Manager.heartbeat)
-            threads.append(hb_thread)
-            hb_thread.start()
+            while not self.dead:
+                msg_dict = tcp_server(sock) # get the acknowledgement
+                # do something with the message
+                if msg_dict['message_type'] == 'shutdown':
+                    self.dead = True
 
+                elif msg_dict['message_type'] == 'register_ack':
+                    # once we get the ack, set up the heartbeat thread
 
-            while msg_dict['message_type'] != "shutdown":
-                msg_dict = tcp_server(sock)
+                    hb_thread = Thread(target=self.udp_client)
+                    threads.append(hb_thread)
+                    hb_thread.start()
 
-            # implement shutdown
-            shutdown()
-
-        time.sleep(120)
-    def shutdown():
-        """Shutdown the Worker after shutdown message received."""
-        # once we receive the 
+    def udp_client(self, server_host, server_port, worker_host, worker_port):
+        """Send worker heartbeats on UDP."""
+        heartbeat = {
+            "message_type": "heartbeat",
+            "worker_host":  self.host,
+            "worker_port": self.port
+        }
+        while not self.dead:
+            # Create an INET, DGRAM socket, this is UDP
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                # Connect to the UDP socket on server
+                sock.connect((self.manager_host, self.manager_hb_port))
+                # Send a message
+                message = json.dumps(heartbeat)
+                sock.sendall(message.encode('utf-8'))
+            Thread.sleep(2)
+        print("END OF UDP_CLIENT")
 
 
 
@@ -106,6 +120,7 @@ def main(host, port, manager_host, manager_port, manager_hb_port):
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
+    threads = []
     Worker(host, port, manager_host, manager_port, manager_hb_port)
 
 if __name__ == '__main__':
