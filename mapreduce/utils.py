@@ -15,12 +15,15 @@ LOGGER = logging.getLogger(__name__)
 def tcp_client(server_host, server_port, msg):
     """Send a message to server_host at server_port."""
     # create an INET, STREAMing socket, this is TCP
+    print('in client')
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # connect to the server
         sock.connect((server_host, server_port))
+        print('got past the connect')
         # send a message
         message = json.dumps(msg)
         sock.sendall(message.encode('utf-8'))
+        print('sent the message')
 
 def tcp_server(sock):
     """Function to run the infinite listen."""

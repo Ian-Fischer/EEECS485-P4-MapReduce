@@ -4,6 +4,7 @@ import pathlib
 import os
 import socket
 import logging
+import shutil
 import json
 import time
 import click
@@ -47,6 +48,12 @@ class Manager:
         )
         # set up dead variable to end threads
         self.dead = False
+        self.job_counter = 0
+        self.queue = []
+        self.host = host
+        self.port = port
+        self.hb_port = hb_port
+        self.curr_job = None
         """
         workers: 
         (worker_host, worker_port) => 
@@ -60,11 +67,11 @@ class Manager:
         self.workers = {}
         self.threads = []
         # set up tmp directory in mapreduce (mapreduce/tmp)
-        tmp_path = pathlib.Path(__file__).parents[1] / "tmp"
+        tmp_path = pathlib.Path("tmp")
         tmp_path.mkdir(exist_ok=True)
         # delete any files that are in the dir (if already exists)
-        for file in tmp_path.glob('job-*'):
-            file.unlink()
+        for thing in tmp_path.glob('job-*'):
+            shutil.rmtree(thing)
         # set up 
         # spwan heart beat thread
         hb_thread = Thread(target=self.check_heartbeats, args=(host, hb_port))
@@ -87,11 +94,63 @@ class Manager:
                 if message_dict['message_type'] == 'shutdown':
                     self.shutdown()
                     self.dead = True
-                # elif message_dict["message_type"] == "register":
-                #     # self.register_worker()
-            print("end of listening for manager")
+                # registration
+                elif message_dict["message_type"] == "register":
+                    self.register_worker(message_dict)
+                    # TODO: check if there is any work being done and assign it to the worker
+                # new job req.
+                elif message_dict['message_type'] == 'new_manager_job':
+                    # manager recieves this when recieve a new job
+                    self.new_job_direc(message_dict, tmp_path)
+                    #self.assign_job()
+
+                    
+    def assign_job(self, msg_dict):
+        # TODO: if not workers or busy, put i nqueue
+        # TODO: if there are workers and not busy, start
+        if self.available_workers() and (self.curr_job is None):
+            #begin job execution
+            pass
+        else:
+            # if there are no workers and not busy, start
+            self.queue.append(msg_dict)
+
 
             
+        print("finish")
+    
+    def available_workers(self):
+        """Check if there are any available workers."""
+        for key, worker in self.workers:
+            if worker['status'] == 'ready':
+                return key
+        return None
+
+
+
+    def new_job_direc(self, msg_dict, tmp_path):
+        """Handle a new job request."""
+        """
+        {
+            "message_type": "new_manager_job",
+            "input_directory": string,
+            "output_directory": string,
+            "mapper_executable": string,
+            "reducer_executable": string,
+            "num_mappers" : int,
+            "num_reducers" : int
+        }
+        """
+        # make intermediate directory
+        intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
+        intrm_dir_path.mkdir(parents=True, exist_ok=True)
+        # get the output directory path
+        output_dir_path = pathlib.Path(msg_dict['output_directory'])
+        # create the output directory if it does not exist
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        # increment job counter
+        self.job_counter += 1
+        
 
 
     def check_heartbeats(self, host, hb_port):
@@ -114,8 +173,23 @@ class Manager:
                         worker['status'] = 'dead'
         print('end of check_heartbeats')
     
-    def register_worker(msg_dict):
+    def register_worker(self, msg_dict):
         """Add worker to manager's worker dict"""
+        # put the worker in our dictionary (time and info)
+        host, port = msg_dict['worker_host'], msg_dict['worker_port']
+        self.workers[(host, port)] = {
+            'last_checkin': time.time(),
+            'status': 'ready'
+        }
+        # send an ack to the worker
+        reg_ack = {
+            "message_type": "register_ack",
+            "worker_host": host,
+            "worker_port": port,
+        }
+        tcp_client(host, port, reg_ack)
+        # TODO: check the job queue and assign work if there is any
+
 
     def fault():
         """Fault tolerance for managers."""
@@ -161,7 +235,6 @@ class Manager:
             tcp_client(server_host=server_host, server_port=server_port, msg=msg)
             self.workers[key]['status'] = 'dead'
         # kill the manager process
-        # TODO: make sure this is the right way to end a process
 
 
 @click.command()

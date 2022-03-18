@@ -28,13 +28,12 @@ class Worker:
             manager_host, manager_port, manager_hb_port,
         )
         self.dead = False
-        # This is a fake message to demonstrate pretty printing with logging
-        message_dict = {
-            "message_type": "register_ack",
-            "worker_host": "localhost",
-            "worker_port": 6001,
-        }
-        print("TCP recv\n%s", json.dumps(message_dict, indent=2))
+        self.ackd = False
+        self.host = host
+        self.port = port
+        self.manager_host = manager_host
+        self.manager_port = manager_port
+        self.manager_hb_port = manager_hb_port
         """
         On startup worker should:
 
@@ -61,7 +60,6 @@ class Worker:
             # Socket accept() and recv() will block for a maximum of 1 second.  If you
             # omit this, it blocks indefinitely, waiting for a connection.
             sock.settimeout(1)
-
             # send the register message to the manager
             reg_msg = {
                 "message_type" : "register",
@@ -69,21 +67,21 @@ class Worker:
                 "worker_port" : port
             }
             tcp_client(manager_host, manager_port, reg_msg)
-
             while not self.dead:
                 msg_dict = tcp_server(sock) # get the acknowledgement
                 # do something with the message
                 if msg_dict['message_type'] == 'shutdown':
                     self.dead = True
-
+                # registration message
                 elif msg_dict['message_type'] == 'register_ack':
                     # once we get the ack, set up the heartbeat thread
-
                     hb_thread = Thread(target=self.udp_client)
                     threads.append(hb_thread)
                     hb_thread.start()
+                    self.ackd = True
+                # all other if statements need ack
 
-    def udp_client(self, server_host, server_port, worker_host, worker_port):
+    def udp_client(self):
         """Send worker heartbeats on UDP."""
         heartbeat = {
             "message_type": "heartbeat",
@@ -98,9 +96,8 @@ class Worker:
                 # Send a message
                 message = json.dumps(heartbeat)
                 sock.sendall(message.encode('utf-8'))
-            Thread.sleep(2)
-        print("END OF UDP_CLIENT")
-
+            time.sleep(2)
+;
 
 
 
