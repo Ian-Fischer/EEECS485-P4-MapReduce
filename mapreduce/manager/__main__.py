@@ -103,7 +103,8 @@ class Manager:
                     # manager recieves this when recieve a new job
                     self.new_job_direc(message_dict, tmp_path)
                     #self.assign_job()
-        # now that we are dead, join all the threads
+        # now that Manager is dead, join all the threads
+        LOGGER.info('joining all threads')
         for thread in self.threads:
             thread.join()
 
@@ -168,7 +169,7 @@ class Manager:
         while not self.dead:
             # update worker times and check for death
             curr_time = time.time()
-            for worker in self.workers:
+            for worker in self.workers.values():
                 if worker['status'] != 'dead':
                     if curr_time - worker['last_checkin'] > 12:
                         ft_thread = Thread(target=self.fault)

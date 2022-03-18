@@ -79,7 +79,8 @@ class Worker:
                     self.threads.append(hb_thread)
                     hb_thread.start()
                     self.ackd = True
-        # all other if statements need ack
+        # now that the worker is dead, join threads
+        LOGGER.info('joining all worker threads')
         for thread in self.threads:
             thread.join()
 
