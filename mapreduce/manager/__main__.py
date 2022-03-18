@@ -54,6 +54,8 @@ class Manager:
         self.port = port
         self.hb_port = hb_port
         self.curr_job = None
+        self.workers = {}
+        self.threads = []
         """
         workers: 
         (worker_host, worker_port) => 
@@ -64,8 +66,6 @@ class Manager:
 
         threads: [hb_thread, listen_thread, ft_thread]
         """
-        self.workers = {}
-        self.threads = []
         # set up tmp directory in mapreduce (mapreduce/tmp)
         tmp_path = pathlib.Path("tmp")
         tmp_path.mkdir(exist_ok=True)
@@ -103,8 +103,11 @@ class Manager:
                     # manager recieves this when recieve a new job
                     self.new_job_direc(message_dict, tmp_path)
                     #self.assign_job()
+        # now that we are dead, join all the threads
+        for thread in self.threads:
+            thread.join()
 
-                    
+
     def assign_job(self, msg_dict):
         # TODO: if not workers or busy, put i nqueue
         # TODO: if there are workers and not busy, start
@@ -170,6 +173,7 @@ class Manager:
                     if curr_time - worker['last_checkin'] > 12:
                         ft_thread = Thread(target=self.fault)
                         ft_thread.start()
+                        self.threads.append(ft_thread)
                         worker['status'] = 'dead'
         print('end of check_heartbeats')
     

@@ -34,6 +34,7 @@ class Worker:
         self.manager_host = manager_host
         self.manager_port = manager_port
         self.manager_hb_port = manager_hb_port
+        self.threads = []
         """
         On startup worker should:
 
@@ -51,7 +52,6 @@ class Worker:
 
         (Manager should ignore heartbeat from unregistered worker)
         """
-        threads = []
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -76,10 +76,12 @@ class Worker:
                 elif msg_dict['message_type'] == 'register_ack':
                     # once we get the ack, set up the heartbeat thread
                     hb_thread = Thread(target=self.udp_client)
-                    threads.append(hb_thread)
+                    self.threads.append(hb_thread)
                     hb_thread.start()
                     self.ackd = True
-                # all other if statements need ack
+        # all other if statements need ack
+        for thread in self.threads:
+            thread.join()
 
     def udp_client(self):
         """Send worker heartbeats on UDP."""
@@ -97,7 +99,6 @@ class Worker:
                 message = json.dumps(heartbeat)
                 sock.sendall(message.encode('utf-8'))
             time.sleep(2)
-;
 
 
 
