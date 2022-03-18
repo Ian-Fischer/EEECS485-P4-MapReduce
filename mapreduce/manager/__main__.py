@@ -108,28 +108,30 @@ class Manager:
         for thread in self.threads:
             thread.join()
 
+    def execute_job(self, msg_dict):
+        """Function that will execute given job."""
+        LOGGER.info("Manager:%s, begin map stage", self.port)
+
+        LOGGER.info("Manager:%s, end map stage", self.port)
 
     def assign_job(self, msg_dict):
         # TODO: if not workers or busy, put i nqueue
         # TODO: if there are workers and not busy, start
-        if self.available_workers() and (self.curr_job is None):
-            #begin job execution
+        if self.available_workers():
+            # begin job execution
+            self.worker[key]
             pass
+        # if there are no available workers, put the job in the queue
         else:
-            # if there are no workers and not busy, start
             self.queue.append(msg_dict)
-
-
-            
-        print("finish")
+        LOGGER.info('assign_job return')
     
     def available_workers(self):
         """Check if there are any available workers."""
         for key, worker in self.workers:
             if worker['status'] == 'ready':
-                return key
-        return None
-
+                return True
+        return False
 
 
     def new_job_direc(self, msg_dict, tmp_path):
@@ -154,8 +156,12 @@ class Manager:
         output_dir_path.mkdir(parents=True, exist_ok=True)
         # increment job counter
         self.job_counter += 1
+        # diff. behavior based on current job status
+        if not self.curr_job:
+            self.assign_job()
+        else:
+            self.queue.append(msg_dict)
         
-
 
     def check_heartbeats(self, host, hb_port):
         """Check for worker heartbeats on UDP."""
