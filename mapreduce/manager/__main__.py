@@ -54,6 +54,9 @@ class Manager:
         self.port = port
         self.hb_port = hb_port
         self.curr_job = None
+        self.curr_job_m = None
+        self.curr_job_r = None
+        self.stage = None
         self.workers = {}
         self.threads = []
         """
@@ -95,44 +98,83 @@ class Manager:
                     self.shutdown()
                     self.dead = True
                 # registration
-                elif message_dict["message_type"] == "register":
+                elif message_dict["message_type"] == 'register':
                     self.register_worker(message_dict)
                     # TODO: check if there is any work being done and assign it to the worker
                 # new job req.
                 elif message_dict['message_type'] == 'new_manager_job':
                     # manager recieves this when recieve a new job
                     self.new_job_direc(message_dict, tmp_path)
-                    #self.assign_job()
         # now that Manager is dead, join all the threads
         LOGGER.info('joining all threads')
         for thread in self.threads:
             thread.join()
 
-    def execute_job(self, msg_dict):
+    def stage_finished(self):
+        """Check if there are any more tasks left in curr stage."""
+        if self.stage == 'map':
+            for _, value in self.curr_job_m:
+                if value['status'] in ['no', 'busy']:
+                    return False
+            return True
+        else:
+            for _, value in self.curr_job_r:
+                if value['status'] in ['no', 'busy']:
+                    return False
+            return True
+
+    def execute_job(self):
         """Function that will execute given job."""
         LOGGER.info("Manager:%s, begin map stage", self.port)
-
+        # TODO: how to deal with worker registering while
+        # 1. partition the input
+        self.partition()
+        # 2. map
+        while not self.stage_finished():
+            for key, worker in self.workers:
+                if worker['status'] == 'ready':
+                    #send the worker work if there is any
+                    partition = self.work()
+                    if partition:
+                        self.assign_task(partition=partition, worker=key)
         LOGGER.info("Manager:%s, end map stage", self.port)
+        # 3. reduce
+        self.stage = 'reduce'
+        # 4. exit
 
-    def assign_job(self, msg_dict):
-        # TODO: if not workers or busy, put i nqueue
-        # TODO: if there are workers and not busy, start
-        if self.available_workers():
-            # begin job execution
-            self.worker[key]
-            pass
-        # if there are no available workers, put the job in the queue
-        else:
-            self.queue.append(msg_dict)
-        LOGGER.info('assign_job return')
     
     def available_workers(self):
         """Check if there are any available workers."""
-        for key, worker in self.workers:
+        for _, worker in self.workers:
             if worker['status'] == 'ready':
                 return True
         return False
 
+    
+    def partition(self):
+        """Partition job."""
+        input_files = os.listdir(self.curr_job['input_directory']) # should it be an input_path instread?
+        num_mappers = self.curr_job['num_mappers'] 
+        # assign the input_file to it's task
+        part_files = [[]] * num_mappers
+        # round-robin
+        for i, file_path in enumerate(input_files):
+            task_id = i % num_mappers
+            part_files[task_id].append(file_path)
+        for task_id in range(part_files):
+            self.curr_job_m[task_id] = {
+                "status": "no",
+                "input_files": part_files[task_id],
+                "executable": self.curr_job['mapper_executable'],
+                "output_directory": self.curr_job['output_directory'],
+                "num_partitions": num_mappers,
+                "worker_host": None,
+                "worker_port": None
+            }
+            
+
+
+            
 
     def new_job_direc(self, msg_dict, tmp_path):
         """Handle a new job request."""
@@ -151,16 +193,44 @@ class Manager:
         intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
         intrm_dir_path.mkdir(parents=True, exist_ok=True)
         # get the output directory path
-        output_dir_path = pathlib.Path(msg_dict['output_directory'])
+        output_dir_path = pathlib.Path(self.curr_job['output_directory'])
         # create the output directory if it does not exist
         output_dir_path.mkdir(parents=True, exist_ok=True)
         # increment job counter
         self.job_counter += 1
-        # diff. behavior based on current job status
-        if not self.curr_job:
-            self.assign_job()
+        # only execute job if no curr job and there are available workers
+        if not self.curr_job and self.available_workers():
+            # update member variables
+            self.stage = 'map'
+            self.curr_job = msg_dict
+            job_thread = Thread(target=self.execute_job)
+            job_thread.start()
+            self.threads.append(job_thread)
         else:
             self.queue.append(msg_dict)
+
+
+    def work(self):
+        """Check if there are any unassigned partitions in curr_job."""
+        """
+        (taskid)
+        {
+            "status": {no, busy, done}
+            "input_files": []
+            "executable": <executable>
+            "output_dir": <directory>
+            "worker_host": assigned worker host
+            "worker_port": assigned worker port
+        }
+        """
+        if self.stage == 'map':
+            partitions = self.curr_job_m
+        else:
+            partitions = self.curr_job_r
+        for taskid, partition in partitions:
+            if partition['status'] == 'no':
+                return (taskid, partition)
+        return None
         
 
     def check_heartbeats(self, host, hb_port):
@@ -182,8 +252,29 @@ class Manager:
                         ft_thread.start()
                         self.threads.append(ft_thread)
                         worker['status'] = 'dead'
-        print('end of check_heartbeats')
     
+    
+    def assign_task(self, partition, worker):
+        """Assign a task to a worker."""
+        # create the message
+        task_message = {
+            "message_type": "new_map_task",
+            "task_id": int,
+            "input_paths": partition['paths'],
+            "executable": partition['executable'],
+            "output_directory": partition['output_dir'],
+            "num_partitions": self.curr_job['num_reducers'],
+            "worker_host": worker[0],
+            "worker_port": worker[1]
+        }
+        # send the message to the worker
+        tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
+        # update the partition for the worker info
+        partition['worker_host'] = worker[0]
+        partition['worker_port'] = worker[1]
+        partition['status'] = 'busy'
+    
+
     def register_worker(self, msg_dict):
         """Add worker to manager's worker dict"""
         # put the worker in our dictionary (time and info)
@@ -199,12 +290,23 @@ class Manager:
             "worker_port": port,
         }
         tcp_client(host, port, reg_ack)
-        # TODO: check the job queue and assign work if there is any
+        # if there is no current job & something in queue
+        # start a the job at the front of the queue
+        if not self.curr_job and len(self.queue) > 0:
+            new_job = self.queue[0]
+            self.queue.pop(0)
+            # update member variables for new job
+            self.stage = 'map'
+            self.curr_job = new_job
+            job_thread = Thread(target=self.execute_job)
+            job_thread.start()
+            self.threads.append(job_thread)
 
 
     def fault():
         """Fault tolerance for managers."""
         print('implement me')
+
 
     def udp_server(self, host, port):
         # Create an INET, DGRAM socket, this is UDP
