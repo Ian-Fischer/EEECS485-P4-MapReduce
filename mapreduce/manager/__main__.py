@@ -128,7 +128,7 @@ class Manager:
         LOGGER.info("Manager:%s, begin map stage", self.port)
         # TODO: how to deal with worker registering while
         # 1. partition the input
-        self.partition()
+        self.partition_mapper()
         # 2. map
         while not self.stage_finished():
             for key, worker in self.workers:
@@ -151,7 +151,7 @@ class Manager:
         return False
 
     
-    def partition(self):
+    def partition_mapper(self):
         """Partition job."""
         input_files = os.listdir(self.curr_job['input_directory']) # should it be an input_path instread?
         num_mappers = self.curr_job['num_mappers'] 
