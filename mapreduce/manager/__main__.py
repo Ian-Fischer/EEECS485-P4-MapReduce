@@ -7,9 +7,9 @@ import logging
 import shutil
 import json
 import time
+from threading import Thread
 import click
 from mapreduce.utils import tcp_client, tcp_server
-from threading import Thread
 
 """
     On startup manager should:
@@ -53,9 +53,9 @@ class Manager:
         self.host = host
         self.port = port
         self.hb_port = hb_port
-        self.curr_job = None
-        self.curr_job_m = None
-        self.curr_job_r = None
+        self.curr_job = {}
+        self.curr_job_m = {}
+        self.curr_job_r = {}
         self.stage = None
         self.workers = {}
         self.threads = []
@@ -112,16 +112,17 @@ class Manager:
 
     def stage_finished(self):
         """Check if there are any more tasks left in curr stage."""
+        # map stage
         if self.stage == 'map':
             for _, value in self.curr_job_m:
                 if value['status'] in ['no', 'busy']:
                     return False
             return True
-        else:
-            for _, value in self.curr_job_r:
-                if value['status'] in ['no', 'busy']:
-                    return False
-            return True
+        # reduce stage
+        for _, value in self.curr_job_r:
+            if value['status'] in ['no', 'busy']:
+                return False
+        return True
 
     def execute_job(self):
         """Function that will execute given job."""
@@ -171,9 +172,6 @@ class Manager:
                 "worker_host": None,
                 "worker_port": None
             }
-            
-
-
             
 
     def new_job_direc(self, msg_dict, tmp_path):
@@ -227,7 +225,7 @@ class Manager:
             partitions = self.curr_job_m
         else:
             partitions = self.curr_job_r
-        for taskid, partition in partitions:
+        for taskid, partition in partitions.items():
             if partition['status'] == 'no':
                 return (taskid, partition)
         return None
@@ -303,12 +301,13 @@ class Manager:
             self.threads.append(job_thread)
 
 
-    def fault():
+    def fault(self):
         """Fault tolerance for managers."""
         print('implement me')
 
 
     def udp_server(self, host, port):
+        """UDP server code."""
         # Create an INET, DGRAM socket, this is UDP
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             # Bind the UDP socket to the server 
@@ -341,7 +340,7 @@ class Manager:
         msg = {
             'message_type': 'shutdown'
         }
-        for key in self.workers.keys():
+        for key, _ in self.workers.items():
             # get workers host and port
             server_host, server_port = key[0], key[1]
             # send the message
