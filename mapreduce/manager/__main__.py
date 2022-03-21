@@ -106,9 +106,11 @@ class Manager:
                     # manager recieves this when recieve a new job
                     self.new_job_direc(message_dict, tmp_path)
         # now that Manager is dead, join all the threads
-        LOGGER.info('joining all threads')
+        LOGGER.info('joining manager all threads')
         for thread in self.threads:
+            LOGGER.info(f'closing thread {thread.name}')
             thread.join()
+
 
     def stage_finished(self):
         """Check if there are any more tasks left in curr stage."""
@@ -146,7 +148,7 @@ class Manager:
     
     def available_workers(self):
         """Check if there are any available workers."""
-        for _, worker in self.workers:
+        for _, worker in self.workers.items():
             if worker['status'] == 'ready':
                 return True
         return False
@@ -162,7 +164,7 @@ class Manager:
         for i, file_path in enumerate(input_files):
             task_id = i % num_mappers
             part_files[task_id].append(file_path)
-        for task_id in range(part_files):
+        for task_id in range(len(part_files)):
             self.curr_job_m[task_id] = {
                 "status": "no",
                 "input_files": part_files[task_id],
@@ -191,7 +193,7 @@ class Manager:
         intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
         intrm_dir_path.mkdir(parents=True, exist_ok=True)
         # get the output directory path
-        output_dir_path = pathlib.Path(self.curr_job['output_directory'])
+        output_dir_path = pathlib.Path(msg_dict['output_directory'])
         # create the output directory if it does not exist
         output_dir_path.mkdir(parents=True, exist_ok=True)
         # increment job counter
