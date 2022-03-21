@@ -22,6 +22,7 @@ def tcp_client(server_host, server_port, msg):
         message = json.dumps(msg)
         sock.sendall(message.encode('utf-8'))
 
+
 def tcp_server(sock):
     """Function to run the infinite listen."""
     while True:

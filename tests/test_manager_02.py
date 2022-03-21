@@ -7,6 +7,9 @@ import mapreduce
 import utils
 from utils import TESTDATA_DIR
 
+# Configure logging
+LOGGER = logging.getLogger(__name__)
+
 
 def worker_message_generator(mock_socket, manager_log):
     """Fake Worker messages."""
@@ -39,8 +42,12 @@ def worker_message_generator(mock_socket, manager_log):
         "tmp/job-0"
     )
 
+    LOGGER.info(f'simulate files done')
+
     # Wait for Manager to send one map message
     utils.wait_for_map_messages(mock_socket, num=1)
+
+    LOGGER.info('wait for manager to send one map done')
 
     # Status finished message from both mappers
     yield json.dumps({
@@ -53,6 +60,8 @@ def worker_message_generator(mock_socket, manager_log):
         "worker_port": 3001,
     }).encode('utf-8')
     yield None
+
+    LOGGER.info('finished map  1 done')
 
     # Wait for Manager to send one more map message
     utils.wait_for_map_messages(mock_socket, num=2)

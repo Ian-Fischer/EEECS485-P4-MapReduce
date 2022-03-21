@@ -1,4 +1,5 @@
 """MapReduce framework Worker node."""
+from email import message
 import sys
 import os
 import logging
@@ -8,6 +9,8 @@ import socket
 from threading import Thread
 import click
 from mapreduce.utils import tcp_server, tcp_client
+import hashlib
+import subprocess
 
 
 # Configure logging
@@ -63,10 +66,70 @@ class Worker:
                     self.threads.append(hb_thread)
                     hb_thread.start()
                     self.ackd = True
+                elif msg_dict['message_type'] == 'new_map_task':
+                    # once we recieve a new map task, map it
+                    self.map_job(msg_dict)
         # now that the worker is dead, join threads
         LOGGER.info('joining all worker threads')
         for thread in self.threads:
             thread.join()
+
+    def map_job(self, message_dict):
+        """In there like swimwear."""
+        """
+        msg_dict = {
+            "message_type": "new_map_task",
+            "task_id": int,
+            "input_paths": [list of strings],
+            "executable": string,
+            "output_directory": string,
+            "num_partitions": int,
+            "worker_host": string,
+            "worker_port": int
+        }
+        """
+
+        executable = message_dict['executable']
+        input_paths = message_dict['input_paths']
+        # input paths
+        for input_path in input_paths:
+            with open(input_path) as infile:
+                with subprocess.Popen(
+                    [executable],
+                    stdin=infile,
+                    stdout=subprocess.PIPE,
+                    universal_newlines=True,
+                ) as map_process:
+                    for line in map_process.stdout:
+                        # split over tab into [key, value]
+                        line_list = line.split('\t')
+                        key, value = line_list[0], line_list[1]
+                        # Add line to correct partition output file
+                        hexdigest = hashlib.md5(key.encode("utf-8")).hexdigest()
+                        keyhash = int(hexdigest, base=16)
+                        partition = keyhash % message_dict['num_partitions']
+                        # maptask{task_id}-part{partition_number} partition number should be modulated
+                        task_id = message_dict['task_id']
+                        end_of_path = "maptask{0:0=5d}".format(task_id)+'-part{0:0=5d}'.format(partition)
+                        file_path = message_dict['output_directory']+'/'+end_of_path
+                        with open(file_path, 'a') as file:
+                            file.write(line)
+                        
+        # now we finished writing
+        output_paths = []
+        for file_name in os.listdir(message_dict['output_directory']):
+            output_paths.append(message_dict['output_directory']+'/'+file_name)
+        # craft a short but meaningful message
+        message = {
+            "message_type": "finished",
+            "task_id": message_dict['task_id'],
+            "output_paths" : output_paths,
+            "worker_host": self.host,
+            "worker_port": self.port
+        }
+        # send the message to the manager
+        tcp_client(self.manager_host, self.manager_port, message)
+
 
     def udp_client(self):
         """Send worker heartbeats on UDP."""

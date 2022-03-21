@@ -1,4 +1,5 @@
 """MapReduce framework Manager node."""
+from re import L
 import sys
 import pathlib
 import os
@@ -93,6 +94,7 @@ class Manager:
             sock.settimeout(1)
             while not self.dead:
                 message_dict = tcp_server(sock)
+                LOGGER.info(f'Current Message: {message_dict}')
                 # do something with the message
                 if message_dict['message_type'] == 'shutdown':
                     self.shutdown()
@@ -100,7 +102,6 @@ class Manager:
                 # registration
                 elif message_dict["message_type"] == 'register':
                     self.register_worker(message_dict)
-                    # TODO: check if there is any work being done and assign it to the worker
                 # new job req.
                 elif message_dict['message_type'] == 'new_manager_job':
                     # manager recieves this when recieve a new job
@@ -117,14 +118,18 @@ class Manager:
     def finished(self, msg_dict):
         """Deal with received finished message."""
         # set task to finished, add output paths to the dictionary
+        worker = (msg_dict['worker_host'], msg_dict['worker_port'])
+        LOGGER.info(f'Finished task #{msg_dict["task_id"]}')
         if self.stage == 'map':
             task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
             self.curr_job_m[task_id]['status'] = 'done'
             self.curr_job_m[task_id]['output_paths'] = output_paths
+            self.workers[worker]['status'] = 'ready'
         else:
             task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
-            self.curr_job_m[task_id]['status'] = 'done'
-            self.curr_job_m[task_id]['output_paths'] = output_paths
+            self.curr_job_r[task_id]['status'] = 'done'
+            self.curr_job_r[task_id]['output_paths'] = output_paths
+            self.workers[worker]['status'] = 'ready'
 
     def stage_finished(self):
         """Check if there are any more tasks left in curr stage."""
@@ -143,7 +148,6 @@ class Manager:
     def execute_job(self):
         """Function that will execute given job."""
         LOGGER.info("Manager:%s, begin map stage", self.port)
-        # TODO: how to deal with worker registering while
         # 1. partition the input
         self.partition_mapper()
         # 2. map
@@ -152,8 +156,9 @@ class Manager:
                 if worker['status'] == 'ready':
                     #send the worker work if there is any
                     taskid = self.work()
-                    if taskid:
-                        self.assign_task(partition=self.curr_job_m[taskid], worker=key)
+                    if taskid is not None:
+                        LOGGER.info(f'Assigning worker {key}, task is {taskid}')
+                        self.assign_task(taskid=taskid, worker=key)
         LOGGER.info("Manager:%s, end map stage", self.port)
         # 3. reduce
         self.stage = 'reduce'
@@ -169,25 +174,31 @@ class Manager:
 
     
     def partition_mapper(self):
-        """Partition job."""
+        """Partition files and create curr_job_m."""
         input_files = os.listdir(self.curr_job['input_directory']) # should it be an input_path instread?
+        input_files.sort()
         num_mappers = self.curr_job['num_mappers'] 
         # assign the input_file to it's task
-        part_files = [[]] * num_mappers
+        part_files = []
+        for _ in range(num_mappers):
+            part_files.append([])
         # round-robin
         for i, file_path in enumerate(input_files):
+            LOGGER.info(f'PARTITIONING i={i}, i mod mappers={i%num_mappers}')
             task_id = i % num_mappers
-            part_files[task_id].append(file_path)
-        for task_id in range(num_mappers):
-            self.curr_job_m[task_id] = {
+            part_files[task_id].append(self.curr_job['input_directory']+'/'+file_path)
+            LOGGER.info(f'PARTITIONING adding file={file_path} to task={task_id}, part={part_files}')
+        for taskid in range(num_mappers):
+            self.curr_job_m[taskid] = {
                 "status": "no",
-                "input_files": part_files[task_id],
+                "input_files": part_files[taskid],
                 "executable": self.curr_job['mapper_executable'],
-                "output_directory": self.curr_job['output_directory'],
-                "num_partitions": num_mappers,
+                "output_directory": str(self.curr_job['intermediate']),
+                "num_partitions": self.curr_job['num_reducers'],
                 "worker_host": None,
                 "worker_port": None
             }
+        LOGGER.info(f'Done partitioning: {self.curr_job_m}')
             
 
     def new_job_direc(self, msg_dict, tmp_path):
@@ -206,6 +217,7 @@ class Manager:
         # make intermediate directory
         intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
         intrm_dir_path.mkdir(parents=True, exist_ok=True)
+        msg_dict['intermediate'] = intrm_dir_path
         # get the output directory path
         output_dir_path = pathlib.Path(msg_dict['output_directory'])
         # create the output directory if it does not exist
@@ -213,8 +225,10 @@ class Manager:
         # increment job counter
         self.job_counter += 1
         # only execute job if no curr job and there are available workers
+        LOGGER.info(f'Received new job, current job status is {not self.curr_job}, available workers is {self.available_workers()}')
         if not self.curr_job and self.available_workers():
             # update member variables
+            LOGGER.info('Assigned new job!')
             self.stage = 'map'
             self.curr_job = msg_dict
             job_thread = Thread(target=self.execute_job)
@@ -268,26 +282,42 @@ class Manager:
                         worker['status'] = 'dead'
     
     
-    def assign_task(self, partition, worker):
+    def assign_task(self, taskid, worker):
         """Assign a task to a worker."""
-        # create the message
-        task_message = {
-            "message_type": "new_map_task",
-            "task_id": partition[0],
-            "input_paths": partition[1]['input_files'],
-            "executable": partition[1]['executable'],
-            "output_directory": partition[1]['output_directory'],
-            "num_partitions": self.curr_job['num_reducers'],
-            "worker_host": worker[0],
-            "worker_port": worker[1]
+        """
+        (taskid)
+        {
+            "status": {no, busy, done}
+            "input_files": []
+            "executable": <executable>
+            "output_dir": <directory>
+            "worker_host": assigned worker host
+            "worker_port": assigned worker port
         }
-        # send the message to the worker
-        tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
-        # update the partition for the worker info
-        partition[1]['worker_host'] = worker[0]
-        partition[1]['worker_port'] = worker[1]
-        partition[1]['status'] = 'busy'
-    
+        """
+        if self.stage == 'map':
+            # create the message
+            task_message = {
+                "message_type": "new_map_task",
+                "task_id": taskid,
+                "input_paths": self.curr_job_m[taskid]['input_files'],
+                "executable": self.curr_job_m[taskid]['executable'],
+                "output_directory": self.curr_job_m[taskid]['output_directory'],
+                "num_partitions": self.curr_job['num_reducers'],
+                "worker_host": worker[0],
+                "worker_port": worker[1]
+            }
+            # send the message to the worker
+            LOGGER.info(f'Sending task {taskid} to worker {worker}')
+            tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
+            LOGGER.info(f'sent!')
+            # update the partition for the worker info
+            self.curr_job_m[taskid]['worker_host'] = worker[0]
+            self.curr_job_m[taskid]['worker_port'] = worker[1]
+            self.curr_job_m[taskid]['status'] = 'busy'
+            self.workers[worker]['status'] = 'busy'
+            LOGGER.info(f'new task: {self.curr_job_m[taskid]}')
+        # TODO: elif self.stage == 'reduce':
 
     def register_worker(self, msg_dict):
         """Add worker to manager's worker dict"""
@@ -297,6 +327,7 @@ class Manager:
             'last_checkin': time.time(),
             'status': 'ready'
         }
+        LOGGER.info(f'registered new worker, host:{host} port: {port}')
         # send an ack to the worker
         reg_ack = {
             "message_type": "register_ack",
