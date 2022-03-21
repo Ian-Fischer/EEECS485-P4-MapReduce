@@ -79,7 +79,7 @@ class Manager:
             shutil.rmtree(thing)
         # set up
         # spwan heart beat thread
-        hb_thread = Thread(target=self.check_heartbeats, args=(host, hb_port))
+        hb_thread = Thread(target=self.udp_server, args=(host, hb_port))
         self.threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
@@ -146,6 +146,7 @@ class Manager:
                 return False
         return True
 
+    # TODO: take this off the thread
     def execute_job(self):
         """Executes given job."""
         LOGGER.info("Manager:%s, begin map stage", self.port)
@@ -153,6 +154,7 @@ class Manager:
         self.partition_mapper()
         # 2. map
         while not self.stage_finished():
+            # TODO: should we lock for each iteration?
             for key, worker in self.workers.items():
                 if worker['status'] == 'ready':
                     # send the worker work if there is any
@@ -253,26 +255,6 @@ class Manager:
                 return taskid
         return None
 
-    def check_heartbeats(self, host, hb_port):
-        """Check for worker heartbeats on UDP."""
-        # launch thread to listen for heartbeats and update last_checkin
-        args = (host, hb_port)
-        hb_listen_thread = Thread(target=self.udp_server, args=args)
-        self.threads.append(hb_listen_thread)
-        hb_listen_thread.start()
-        # constantly checking for dead workers
-        # launch the funeral thread if worker detected dead
-        while not self.dead:
-            # update worker times and check for death
-            curr_time = time.time()
-            for worker in self.workers.values():
-                if worker['status'] != 'dead':
-                    if curr_time - worker['last_checkin'] > 12:
-                        ft_thread = Thread(target=self.fault)
-                        ft_thread.start()
-                        self.threads.append(ft_thread)
-                        worker['status'] = 'dead'
-
     def assign_task(self, taskid, worker):
         """Assign a task to a worker."""
         """
@@ -369,6 +351,15 @@ class Manager:
                 if key not in self.workers.keys():
                     continue
                 self.workers[key]['last_checkin'] = time.time()
+                # update worker times and check for death after message
+                curr_time = time.time()
+                for worker in self.workers.values():
+                    if worker['status'] != 'dead':
+                        if curr_time - worker['last_checkin'] > 12:
+                            ft_thread = Thread(target=self.fault)
+                            ft_thread.start()
+                            self.threads.append(ft_thread)
+                            worker['status'] = 'dead'
 
     def shutdown(self):
         """Shutdown manager."""
