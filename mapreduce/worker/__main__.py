@@ -70,8 +70,9 @@ class Worker:
                     # once we recieve a new map task, map it
                     self.map_job(msg_dict)
         # now that the worker is dead, join threads
-        LOGGER.info('joining all worker threads')
+        LOGGER.info('Joining all worker threads')
         for thread in self.threads:
+            LOGGER.info(f'Joining thread {thread.name}')
             thread.join()
 
     def map_job(self, message_dict):

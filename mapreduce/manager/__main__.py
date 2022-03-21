@@ -110,10 +110,11 @@ class Manager:
                     # deal with a finished message
                     self.finished(message_dict)
         # now that Manager is dead, join all the threads
-        LOGGER.info('joining manager all threads')
+        LOGGER.info('THREADS joining manager all threads')
         for thread in self.threads:
-            LOGGER.info(f'closing thread {thread.name}')
+            LOGGER.info(f'THREADS closing thread {thread.name}')
             thread.join()
+        LOGGER.info('Done joining')
 
     def finished(self, msg_dict):
         """Deal with received finished message."""
@@ -157,7 +158,6 @@ class Manager:
                     #send the worker work if there is any
                     taskid = self.work()
                     if taskid is not None:
-                        LOGGER.info(f'Assigning worker {key}, task is {taskid}')
                         self.assign_task(taskid=taskid, worker=key)
         LOGGER.info("Manager:%s, end map stage", self.port)
         # 3. reduce
@@ -184,10 +184,8 @@ class Manager:
             part_files.append([])
         # round-robin
         for i, file_path in enumerate(input_files):
-            LOGGER.info(f'PARTITIONING i={i}, i mod mappers={i%num_mappers}')
             task_id = i % num_mappers
             part_files[task_id].append(self.curr_job['input_directory']+'/'+file_path)
-            LOGGER.info(f'PARTITIONING adding file={file_path} to task={task_id}, part={part_files}')
         for taskid in range(num_mappers):
             self.curr_job_m[taskid] = {
                 "status": "no",
@@ -225,10 +223,8 @@ class Manager:
         # increment job counter
         self.job_counter += 1
         # only execute job if no curr job and there are available workers
-        LOGGER.info(f'Received new job, current job status is {not self.curr_job}, available workers is {self.available_workers()}')
         if not self.curr_job and self.available_workers():
             # update member variables
-            LOGGER.info('Assigned new job!')
             self.stage = 'map'
             self.curr_job = msg_dict
             job_thread = Thread(target=self.execute_job)
@@ -308,15 +304,13 @@ class Manager:
                 "worker_port": worker[1]
             }
             # send the message to the worker
-            LOGGER.info(f'Sending task {taskid} to worker {worker}')
             tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
-            LOGGER.info(f'sent!')
             # update the partition for the worker info
             self.curr_job_m[taskid]['worker_host'] = worker[0]
             self.curr_job_m[taskid]['worker_port'] = worker[1]
             self.curr_job_m[taskid]['status'] = 'busy'
             self.workers[worker]['status'] = 'busy'
-            LOGGER.info(f'new task: {self.curr_job_m[taskid]}')
+            LOGGER.info(f'Worker (host,port)={worker} assigned task #{taskid}')
         # TODO: elif self.stage == 'reduce':
 
     def register_worker(self, msg_dict):
@@ -327,7 +321,7 @@ class Manager:
             'last_checkin': time.time(),
             'status': 'ready'
         }
-        LOGGER.info(f'registered new worker, host:{host} port: {port}')
+        LOGGER.info(f'Registered new worker, host:{host} port: {port}')
         # send an ack to the worker
         reg_ack = {
             "message_type": "register_ack",
