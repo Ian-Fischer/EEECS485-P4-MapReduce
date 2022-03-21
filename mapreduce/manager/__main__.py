@@ -14,8 +14,8 @@ from mapreduce.utils import tcp_client, tcp_server
 
 """
     On startup manager should:
-    
-    Create new folder temp store all files used by mapreduce server) 
+
+    Create new folder temp store all files used by mapreduce server)
     (if already exists keep it (mkdir) ) (Hints on slash an glob in spec)
 
     Create new thread to listen for UDP heartbeat from workers
@@ -37,10 +37,11 @@ from mapreduce.utils import tcp_client, tcp_server
 # Configure logging
 LOGGER = logging.getLogger(__name__)
 
+
 # All communication done with strings formatted using JSON
 class Manager:
     """Represent a MapReduce framework Manager node."""
-    
+
     def __init__(self, host, port, hb_port):
         """Construct a Manager instance and start listening for messages."""
         LOGGER.info(
@@ -61,8 +62,8 @@ class Manager:
         self.workers = {}
         self.threads = []
         """
-        workers: 
-        (worker_host, worker_port) => 
+        workers:
+        (worker_host, worker_port) =>
         {
             last_checkin : time
             status : {ready, busy, dead}
@@ -76,21 +77,18 @@ class Manager:
         # delete any files that are in the dir (if already exists)
         for thing in tmp_path.glob('job-*'):
             shutil.rmtree(thing)
-        # set up 
+        # set up
         # spwan heart beat thread
         hb_thread = Thread(target=self.check_heartbeats, args=(host, hb_port))
         self.threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
         # Create an INET, STREAMing socket, this is TCP
-        # Note: context manager syntax allows for sockets to automatically be closed when an exception is raised or control flow returns.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.listen()
-            # Socket accept() and recv() will block for a maximum of 1 second.  If you
-            # omit this, it blocks indefinitely, waiting for a connection.
             sock.settimeout(1)
             while not self.dead:
                 message_dict = tcp_server(sock)
@@ -122,12 +120,14 @@ class Manager:
         worker = (msg_dict['worker_host'], msg_dict['worker_port'])
         LOGGER.info(f'Finished task #{msg_dict["task_id"]}')
         if self.stage == 'map':
-            task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
+            task_id = msg_dict['task_id']
+            output_paths = msg_dict['output_paths']
             self.curr_job_m[task_id]['status'] = 'done'
             self.curr_job_m[task_id]['output_paths'] = output_paths
             self.workers[worker]['status'] = 'ready'
         else:
-            task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
+            task_id = msg_dict['task_id']
+            output_paths = msg_dict['output_paths']
             self.curr_job_r[task_id]['status'] = 'done'
             self.curr_job_r[task_id]['output_paths'] = output_paths
             self.workers[worker]['status'] = 'ready'
@@ -147,7 +147,7 @@ class Manager:
         return True
 
     def execute_job(self):
-        """Function that will execute given job."""
+        """Executes given job."""
         LOGGER.info("Manager:%s, begin map stage", self.port)
         # 1. partition the input
         self.partition_mapper()
@@ -155,7 +155,7 @@ class Manager:
         while not self.stage_finished():
             for key, worker in self.workers.items():
                 if worker['status'] == 'ready':
-                    #send the worker work if there is any
+                    # send the worker work if there is any
                     taskid = self.work()
                     if taskid is not None:
                         self.assign_task(taskid=taskid, worker=key)
@@ -164,7 +164,6 @@ class Manager:
         self.stage = 'reduce'
         # 4. exit
 
-    
     def available_workers(self):
         """Check if there are any available workers."""
         for _, worker in self.workers.items():
@@ -172,12 +171,11 @@ class Manager:
                 return True
         return False
 
-    
     def partition_mapper(self):
         """Partition files and create curr_job_m."""
-        input_files = os.listdir(self.curr_job['input_directory']) # should it be an input_path instread?
+        input_files = os.listdir(self.curr_job['input_directory'])
         input_files.sort()
-        num_mappers = self.curr_job['num_mappers'] 
+        num_mappers = self.curr_job['num_mappers']
         # assign the input_file to it's task
         part_files = []
         for _ in range(num_mappers):
@@ -185,7 +183,8 @@ class Manager:
         # round-robin
         for i, file_path in enumerate(input_files):
             task_id = i % num_mappers
-            part_files[task_id].append(self.curr_job['input_directory']+'/'+file_path)
+            path = self.curr_job['input_directory']+'/'+file_path
+            part_files[task_id].append(path)
         for taskid in range(num_mappers):
             self.curr_job_m[taskid] = {
                 "status": "no",
@@ -197,7 +196,6 @@ class Manager:
                 "worker_port": None
             }
         LOGGER.info(f'Done partitioning: {self.curr_job_m}')
-            
 
     def new_job_direc(self, msg_dict, tmp_path):
         """Handle a new job request."""
@@ -233,7 +231,6 @@ class Manager:
         else:
             self.queue.append(msg_dict)
 
-
     def work(self):
         """Check if there are any unassigned partitions in curr_job."""
         """
@@ -255,13 +252,12 @@ class Manager:
             if partition['status'] == 'no':
                 return taskid
         return None
-        
 
     def check_heartbeats(self, host, hb_port):
         """Check for worker heartbeats on UDP."""
         # launch thread to listen for heartbeats and update last_checkin
         args = (host, hb_port)
-        hb_listen_thread = Thread(target=self.udp_server, args=args) 
+        hb_listen_thread = Thread(target=self.udp_server, args=args)
         self.threads.append(hb_listen_thread)
         hb_listen_thread.start()
         # constantly checking for dead workers
@@ -276,8 +272,7 @@ class Manager:
                         ft_thread.start()
                         self.threads.append(ft_thread)
                         worker['status'] = 'dead'
-    
-    
+
     def assign_task(self, taskid, worker):
         """Assign a task to a worker."""
         """
@@ -293,18 +288,19 @@ class Manager:
         """
         if self.stage == 'map':
             # create the message
+            o_d = self.curr_job_m[taskid]['output_directory']
             task_message = {
                 "message_type": "new_map_task",
                 "task_id": taskid,
                 "input_paths": self.curr_job_m[taskid]['input_files'],
                 "executable": self.curr_job_m[taskid]['executable'],
-                "output_directory": self.curr_job_m[taskid]['output_directory'],
+                "output_directory": o_d,
                 "num_partitions": self.curr_job['num_reducers'],
                 "worker_host": worker[0],
                 "worker_port": worker[1]
             }
             # send the message to the worker
-            tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
+            tcp_client(worker[0], worker[1], task_message)
             # update the partition for the worker info
             self.curr_job_m[taskid]['worker_host'] = worker[0]
             self.curr_job_m[taskid]['worker_port'] = worker[1]
@@ -314,7 +310,7 @@ class Manager:
         # TODO: elif self.stage == 'reduce':
 
     def register_worker(self, msg_dict):
-        """Add worker to manager's worker dict"""
+        """Adds worker to manager's worker dict."""
         # put the worker in our dictionary (time and info)
         host, port = msg_dict['worker_host'], msg_dict['worker_port']
         self.workers[(host, port)] = {
@@ -341,17 +337,15 @@ class Manager:
             job_thread.start()
             self.threads.append(job_thread)
 
-
     def fault(self):
         """Fault tolerance for managers."""
         print('implement me')
-
 
     def udp_server(self, host, port):
         """UDP server code."""
         # Create an INET, DGRAM socket, this is UDP
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            # Bind the UDP socket to the server 
+            # Bind the UDP socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.settimeout(1)
@@ -368,9 +362,10 @@ class Manager:
                 except json.JSONDecodeError:
                     continue
                 # update the time that the worker last checked in
-                # ignore if not registered 
-                key = (message_dict['worker_host'], message_dict['worker_port'])
-                # ignore if not registered 
+                # ignore if not registered
+                key = (message_dict['worker_host'],
+                       message_dict['worker_port'])
+                # ignore if not registered
                 if key not in self.workers.keys():
                     continue
                 self.workers[key]['last_checkin'] = time.time()
@@ -385,7 +380,7 @@ class Manager:
             # get workers host and port
             server_host, server_port = key[0], key[1]
             # send the message
-            tcp_client(server_host=server_host, server_port=server_port, msg=msg)
+            tcp_client(server_host, server_port, msg)
             self.workers[key]['status'] = 'dead'
         # kill the manager process
 
@@ -405,6 +400,7 @@ def main(host, port, hb_port):
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
     Manager(host=host, port=port, hb_port=hb_port)
+
 
 if __name__ == '__main__':
     main()

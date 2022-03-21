@@ -1,5 +1,4 @@
 """MapReduce framework Worker node."""
-from email import message
 import sys
 import os
 import logging
@@ -7,10 +6,10 @@ import json
 import time
 import socket
 from threading import Thread
-import click
-from mapreduce.utils import tcp_server, tcp_client
 import hashlib
 import subprocess
+import click
+from mapreduce.utils import tcp_server, tcp_client
 
 
 # Configure logging
@@ -19,8 +18,9 @@ LOGGER = logging.getLogger(__name__)
 
 class Worker:
     """A class representing a worker node in a MapReduce cluster."""
+    
     def __init__(self, host, port, manager_host, manager_port,
-                manager_hb_port):
+                 manager_hb_port):
         """Construct a Worker instance and start listening for messages."""
         LOGGER.info(
             "Starting worker host=%s port=%s pwd=%s",
@@ -44,18 +44,16 @@ class Worker:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.listen()
-            # Socket accept() and recv() will block for a maximum of 1 second.  If you
-            # omit this, it blocks indefinitely, waiting for a connection.
             sock.settimeout(1)
             # send the register message to the manager
             reg_msg = {
-                "message_type" : "register",
-                "worker_host" : host,
-                "worker_port" : port
+                "message_type": "register",
+                "worker_host": host,
+                "worker_port": port
             }
             tcp_client(manager_host, manager_port, reg_msg)
             while not self.dead:
-                msg_dict = tcp_server(sock) # get the acknowledgement
+                msg_dict = tcp_server(sock)
                 # do something with the message
                 if msg_dict['message_type'] == 'shutdown':
                     self.dead = True
@@ -94,7 +92,7 @@ class Worker:
         input_paths = message_dict['input_paths']
         # input paths
         for input_path in input_paths:
-            with open(input_path) as infile:
+            with open(input_path, encoding='utf-8') as infile:
                 with subprocess.Popen(
                     [executable],
                     stdin=infile,
@@ -104,18 +102,19 @@ class Worker:
                     for line in map_process.stdout:
                         # split over tab into [key, value]
                         line_list = line.split('\t')
-                        key, value = line_list[0], line_list[1]
+                        key = line_list[0]
+                        o_d = message_dict['output_directory']
                         # Add line to correct partition output file
-                        hexdigest = hashlib.md5(key.encode("utf-8")).hexdigest()
-                        keyhash = int(hexdigest, base=16)
+                        hexd = hashlib.md5(key.encode("utf-8")).hexdigest()
+                        keyhash = int(hexd, base=16)
                         partition = keyhash % message_dict['num_partitions']
-                        # maptask{task_id}-part{partition_number} partition number should be modulated
                         task_id = message_dict['task_id']
-                        end_of_path = "maptask{0:0=5d}".format(task_id)+'-part{0:0=5d}'.format(partition)
-                        file_path = message_dict['output_directory']+'/'+end_of_path
-                        with open(file_path, 'a') as file:
+                        part1 = "maptask{0:0=5d}".format(task_id)
+                        part2 = '-part{0:0=5d}'.format(partition)
+                        file_path = o_d+'/'+part1+part2
+                        with open(file_path, 'a', encoding='utf-8') as file:
                             file.write(line)
-                        
+
         # now we finished writing
         output_paths = []
         for file_name in os.listdir(message_dict['output_directory']):
@@ -124,13 +123,12 @@ class Worker:
         message = {
             "message_type": "finished",
             "task_id": message_dict['task_id'],
-            "output_paths" : output_paths,
+            "output_paths": output_paths,
             "worker_host": self.host,
             "worker_port": self.port
         }
         # send the message to the manager
         tcp_client(self.manager_host, self.manager_port, message)
-
 
     def udp_client(self):
         """Send worker heartbeats on UDP."""
@@ -150,7 +148,6 @@ class Worker:
             time.sleep(2)
 
 
-
 @click.command()
 @click.option("--host", "host", default="localhost")
 @click.option("--port", "port", default=6001)
@@ -168,6 +165,7 @@ def main(host, port, manager_host, manager_port, manager_hb_port):
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
     Worker(host, port, manager_host, manager_port, manager_hb_port)
+
 
 if __name__ == '__main__':
     main()

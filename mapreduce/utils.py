@@ -6,11 +6,10 @@ Socket stuff
 """
 import socket
 import json
-from threading import Thread
-import time 
 import logging
 
 LOGGER = logging.getLogger(__name__)
+
 
 def tcp_client(server_host, server_port, msg):
     """Send a message to server_host at server_port."""
@@ -24,15 +23,14 @@ def tcp_client(server_host, server_port, msg):
 
 
 def tcp_server(sock):
-    """Function to run the infinite listen."""
+    """Runs the infinite listen."""
     while True:
         # Wait for a connection for 1s.  The socket library avoids consuming
         # CPU while waiting for a connection.
         try:
-            clientsocket, address = sock.accept()
+            clientsocket, _ = sock.accept()
         except socket.timeout:
             continue
-        #print("Connection from", address[0])
         # Receive data, one chunk at a time.  If recv() times out before we can
         # read a chunk, then go back to the top of the loop and try again.
         # When the client closes the connection, recv() returns empty data,
@@ -56,8 +54,3 @@ def tcp_server(sock):
         except json.JSONDecodeError:
             continue
         return message_dict
-
-            
-
-
-        
