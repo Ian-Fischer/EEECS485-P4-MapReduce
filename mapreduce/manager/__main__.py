@@ -105,23 +105,37 @@ class Manager:
                 elif message_dict['message_type'] == 'new_manager_job':
                     # manager recieves this when recieve a new job
                     self.new_job_direc(message_dict, tmp_path)
+                elif message_dict['message_type'] == 'finished':
+                    # deal with a finished message
+                    self.finished(message_dict)
         # now that Manager is dead, join all the threads
         LOGGER.info('joining manager all threads')
         for thread in self.threads:
             LOGGER.info(f'closing thread {thread.name}')
             thread.join()
 
+    def finished(self, msg_dict):
+        """Deal with received finished message."""
+        # set task to finished, add output paths to the dictionary
+        if self.stage == 'map':
+            task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
+            self.curr_job_m[task_id]['status'] = 'done'
+            self.curr_job_m[task_id]['output_paths'] = output_paths
+        else:
+            task_id, output_paths = msg_dict['task_id'], msg_dict['output_paths']
+            self.curr_job_m[task_id]['status'] = 'done'
+            self.curr_job_m[task_id]['output_paths'] = output_paths
 
     def stage_finished(self):
         """Check if there are any more tasks left in curr stage."""
         # map stage
         if self.stage == 'map':
-            for _, value in self.curr_job_m:
+            for _, value in self.curr_job_m.items():
                 if value['status'] in ['no', 'busy']:
                     return False
             return True
         # reduce stage
-        for _, value in self.curr_job_r:
+        for _, value in self.curr_job_r.items():
             if value['status'] in ['no', 'busy']:
                 return False
         return True
@@ -134,12 +148,12 @@ class Manager:
         self.partition_mapper()
         # 2. map
         while not self.stage_finished():
-            for key, worker in self.workers:
+            for key, worker in self.workers.items():
                 if worker['status'] == 'ready':
                     #send the worker work if there is any
-                    partition = self.work()
-                    if partition:
-                        self.assign_task(partition=partition, worker=key)
+                    taskid = self.work()
+                    if taskid:
+                        self.assign_task(partition=self.curr_job_m[taskid], worker=key)
         LOGGER.info("Manager:%s, end map stage", self.port)
         # 3. reduce
         self.stage = 'reduce'
@@ -164,7 +178,7 @@ class Manager:
         for i, file_path in enumerate(input_files):
             task_id = i % num_mappers
             part_files[task_id].append(file_path)
-        for task_id in range(len(part_files)):
+        for task_id in range(num_mappers):
             self.curr_job_m[task_id] = {
                 "status": "no",
                 "input_files": part_files[task_id],
@@ -229,7 +243,7 @@ class Manager:
             partitions = self.curr_job_r
         for taskid, partition in partitions.items():
             if partition['status'] == 'no':
-                return (taskid, partition)
+                return taskid
         return None
         
 
@@ -259,10 +273,10 @@ class Manager:
         # create the message
         task_message = {
             "message_type": "new_map_task",
-            "task_id": int,
-            "input_paths": partition['paths'],
-            "executable": partition['executable'],
-            "output_directory": partition['output_dir'],
+            "task_id": partition[0],
+            "input_paths": partition[1]['input_files'],
+            "executable": partition[1]['executable'],
+            "output_directory": partition[1]['output_directory'],
             "num_partitions": self.curr_job['num_reducers'],
             "worker_host": worker[0],
             "worker_port": worker[1]
@@ -270,9 +284,9 @@ class Manager:
         # send the message to the worker
         tcp_client(server_host=worker[0], server_port=worker[1], msg=task_message)
         # update the partition for the worker info
-        partition['worker_host'] = worker[0]
-        partition['worker_port'] = worker[1]
-        partition['status'] = 'busy'
+        partition[1]['worker_host'] = worker[0]
+        partition[1]['worker_port'] = worker[1]
+        partition[1]['status'] = 'busy'
     
 
     def register_worker(self, msg_dict):
