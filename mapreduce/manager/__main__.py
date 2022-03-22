@@ -125,12 +125,34 @@ class Manager:
             self.curr_job_m[task_id]['status'] = 'done'
             self.curr_job_m[task_id]['output_paths'] = output_paths
             self.workers[worker]['status'] = 'ready'
+            # if the stage is not finished, assign the task
+            if not self.stage_finished():
+                # get the next task
+                task = self.work()
+                if task:
+                    self.assign_task(task, worker)
+            else:
+                LOGGER.info("Manager:%s, end map stage", self.port)
+                self.stage = 'reduce'
+                self.start_reduce()
+        # otherwise we are in reduce
         else:
             task_id = msg_dict['task_id']
             output_paths = msg_dict['output_paths']
             self.curr_job_r[task_id]['status'] = 'done'
             self.curr_job_r[task_id]['output_paths'] = output_paths
             self.workers[worker]['status'] = 'ready'
+            if not self.stage_finished():
+                # get the next task
+                task = self.work()
+                self.assign_task(task, worker)
+
+    def available_workers(self):
+        """Check if there are any available workers."""
+        for _, worker in self.workers.items():
+            if worker['status'] == 'ready':
+                return True
+        return False
 
     def stage_finished(self):
         """Check if there are any more tasks left in curr stage."""
@@ -146,32 +168,33 @@ class Manager:
                 return False
         return True
 
-    # TODO: take this off the thread
-    def execute_job(self):
-        """Executes given job."""
-        LOGGER.info("Manager:%s, begin map stage", self.port)
-        # 1. partition the input
-        self.partition_mapper()
-        # 2. map
-        while not self.stage_finished():
-            # TODO: should we lock for each iteration?
-            for key, worker in self.workers.items():
-                if worker['status'] == 'ready':
-                    # send the worker work if there is any
-                    taskid = self.work()
-                    if taskid is not None:
-                        self.assign_task(taskid=taskid, worker=key)
-        LOGGER.info("Manager:%s, end map stage", self.port)
-        # 3. reduce
-        self.stage = 'reduce'
-        # 4. exit
-
-    def available_workers(self):
-        """Check if there are any available workers."""
-        for _, worker in self.workers.items():
-            if worker['status'] == 'ready':
-                return True
-        return False
+    def partition_reduce(self):
+        """Partitions the reduce stage."""
+        # get the path to the intermediate dir
+        reduce_fs = self.curr_job['intermediate']
+        num_reducers = self.curr_job['num_reducers']
+        # set up the lists
+        partitions = []
+        for _ in range(self.curr_job['num_reducers']):
+            partitions.append([])
+        for r_f in os.listdir(reduce_fs):
+            # partition is the last five digits of the file name
+            task_id = int(r_f[-5:])
+            # add it!
+            partitions[task_id].append(r_f)
+        # now, files are in the right groups
+        # then, we create the task messages
+        for task_id in range(num_reducers):
+            self.curr_job_r[task_id] = {
+                "message_type": "new_reduce_task",
+                "task_id": task_id,
+                "executable": self.curr_job['reducer_executable'],
+                "input_paths": partitions[task_id],
+                "output_directory": self.curr_job['output_directory'],
+                "worker_host": None,
+                "worker_port": None
+            }
+        LOGGER.info(f'Done partitioning: {self.curr_job_r}')
 
     def partition_mapper(self):
         """Partition files and create curr_job_m."""
@@ -198,6 +221,30 @@ class Manager:
                 "worker_port": None
             }
         LOGGER.info(f'Done partitioning: {self.curr_job_m}')
+
+    def start_stage(self):
+        """Executes current job map stage."""
+        if self.stage == 'map':
+            LOGGER.info("Manager:%s, begin map stage", self.port)
+            # 1. partition the input
+            self.partition_mapper()
+        else:
+            """Start the reduce stage."""
+            # log that we are starting
+            LOGGER.info("Manager:%s begin reduce stage", self.port)
+            # in the map stage, we made num_reducers parts
+            # so, we should split the files pased of their part #
+            # and we will assign those to workers as they come
+            # so, first split it into tasks
+            self.partition_reduce()
+            # now, curr_job_r should be all the task messages
+            # then, go through all available workers and assign them tasks
+        for key, worker in self.workers.items():
+            if worker['status'] == 'ready':
+                # send the worker work if there is any
+                taskid = self.work()
+                if taskid is not None:
+                    self.assign_task(taskid=taskid, worker=key)
 
     def new_job_direc(self, msg_dict, tmp_path):
         """Handle a new job request."""
@@ -227,9 +274,7 @@ class Manager:
             # update member variables
             self.stage = 'map'
             self.curr_job = msg_dict
-            job_thread = Thread(target=self.execute_job)
-            job_thread.start()
-            self.threads.append(job_thread)
+            self.start_stage()
         else:
             self.queue.append(msg_dict)
 
@@ -307,17 +352,21 @@ class Manager:
             "worker_port": port,
         }
         tcp_client(host, port, reg_ack)
+        # if there is a job and work to be done, assign
+        if self.curr_job:
+            # check to see if there is a task
+            task = self.work()
+            # if there is, assign it to the worker
+            if task:
+                self.assign_task(task, (host, port))
         # if there is no current job & something in queue
         # start a the job at the front of the queue
         if not self.curr_job and len(self.queue) > 0:
-            new_job = self.queue[0]
+            self.curr_job = self.queue[0]
             self.queue.pop(0)
             # update member variables for new job
             self.stage = 'map'
-            self.curr_job = new_job
-            job_thread = Thread(target=self.execute_job)
-            job_thread.start()
-            self.threads.append(job_thread)
+            self.start_stage()
 
     def fault(self):
         """Fault tolerance for managers."""
