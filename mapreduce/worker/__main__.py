@@ -68,7 +68,7 @@ class Worker:
                 elif msg_dict['message_type'] == 'new_map_task':
                     # once we recieve a new map task, map it
                     self.map_job(msg_dict)
-                elif msg_dict['message_type'] == 'new_reduce_task'
+                elif msg_dict['message_type'] == 'new_reduce_task':
                     # once we recieve a new reduce task, reduce it
                     self.reduce_job(msg_dict)
         # now that the worker is dead, join threads
@@ -118,11 +118,12 @@ class Worker:
                         file_path = o_d+'/'+part1+part2
                         with open(file_path, 'a', encoding='utf-8') as file:
                             file.write(line)
-
         # now we finished writing
         output_paths = []
         for file_name in os.listdir(message_dict['output_directory']):
-            output_paths.append(message_dict['output_directory']+'/'+file_name)
+            # check if maptask{taskid} is in the filename, we did it
+            if part1 in file_name:
+                output_paths.append(message_dict['output_directory']+'/'+file_name)
         # craft a short but meaningful message
         message = {
             "message_type": "finished",
@@ -136,8 +137,9 @@ class Worker:
 
 
     def reduce_job(self, message_dict):
-        """In there like swimwear (part 2)."""
-        """{
+        """
+        In there like swimwear (part 2).
+        {
             "message_type": "new_reduce_task",
             "task_id": int,
             "executable": string,
@@ -145,36 +147,45 @@ class Worker:
             "output_directory": string,
             "worker_host": string,
             "worker_port": int
-        }""""
+        }
+        """
         executable = message_dict['executable']
         task_id = message_dict['task_id']
         o_d = message_dict['output_directory']
         input_paths = message_dict['input_paths']
         output_path = o_d+'/'+'part-{0:0=5d}'.format(task_id)
-        files = []
+        open_files = []
         for input_path in input_paths:
-            files.append(sorted(open(input_path, 'r')))
-        # input paths
-        with heapq.merge(*files) as infile, open(output_path) as outfile:
+            with open(input_path, 'r') as FileName:
+                lines = FileName.readlines()
+                lines.sort()
+            with open(input_path, 'w') as FileName:
+                for item in lines:
+                    FileName.write("%s" % item)
+        for input_path in input_paths:
+            open_files.append(open(input_path))
+        with open(output_path, 'a') as outfile:
             with subprocess.Popen(
-                [self.executable],
+                [executable],
                 universal_newlines=True,
                 stdin=subprocess.PIPE,
                 stdout=outfile,
             ) as reduce_process:
                 # Pipe input to reduce_process
-                for line in infile:
-                    # run reduce exe.
-                    # write to the output file
+                for line in heapq.merge(*open_files):
+                    # run exe on line and write to output
                     reduce_process.stdin.write(line)
+        # craft a short but meaningful message
+        # now that we are done with that, we finished the lines
         message = {
             "message_type": "finished",
-            "task_id": int,
-            "output_paths" : [list of strings],
-            "worker_host": string,
-            "worker_port": int
+            "task_id": task_id,
+            "output_paths" : [output_path],
+            "worker_host": self.host,
+            "worker_port": self.port
         }
-
+        # send the message to the manager
+        tcp_client(self.manager_host, self.manager_port, message)
 
     def udp_client(self):
         """Send worker heartbeats on UDP."""
