@@ -134,7 +134,7 @@ class Manager:
             else:
                 LOGGER.info("Manager:%s, end map stage", self.port)
                 self.stage = 'reduce'
-                self.start_reduce()
+                self.start_stage()
         # otherwise we are in reduce
         else:
             task_id = msg_dict['task_id']
@@ -145,7 +145,12 @@ class Manager:
             if not self.stage_finished():
                 # get the next task
                 task = self.work()
-                self.assign_task(task, worker)
+                if task:
+                    self.assign_task(task, worker)
+            else:
+                LOGGER.info("Manager:%s end reduce stage", self.port)
+                self.finish_up()
+                    
 
     def available_workers(self):
         """Check if there are any available workers."""
@@ -186,8 +191,7 @@ class Manager:
         # then, we create the task messages
         for task_id in range(num_reducers):
             self.curr_job_r[task_id] = {
-                "message_type": "new_reduce_task",
-                "task_id": task_id,
+                "status": "no",
                 "executable": self.curr_job['reducer_executable'],
                 "input_paths": partitions[task_id],
                 "output_directory": self.curr_job['output_directory'],
@@ -334,7 +338,27 @@ class Manager:
             self.curr_job_m[taskid]['status'] = 'busy'
             self.workers[worker]['status'] = 'busy'
             LOGGER.info(f'Worker (host,port)={worker} assigned task #{taskid}')
-        # TODO: elif self.stage == 'reduce':
+        elif self.stage == 'reduce':
+            # create the message
+            o_d = self.curr_job_r[taskid]['output_directory']
+            # craft a sensible message
+            task_message = {
+                "message_type": "new_reduce_task",
+                "task_id": taskid,
+                "executable": self.curr_job_r[taskid]['executable'],
+                "input_paths": self.curr_job_r[taskid]['input_files'],
+                "output_directory": o_d,
+                "worker_host": worker[0],
+                "worker_port": worker[1]
+            }
+            # send the message to the worker
+            tcp_client(worker[0], worker[1], task_message)
+            # update the partition for the worker info
+            self.curr_job_r[taskid]['worker_host'] = worker[0]
+            self.curr_job_r[taskid]['worker_port'] = worker[1]
+            self.curr_job_r[taskid]['status'] = 'busy'
+            self.workers[worker]['status'] = 'busy'
+            LOGGER.info(f'Worker (host,port)={worker} assigned task #{taskid}')
 
     def register_worker(self, msg_dict):
         """Adds worker to manager's worker dict."""
