@@ -3,6 +3,7 @@ import sys
 import os
 import logging
 import json
+import heapq
 import time
 import socket
 from threading import Thread
@@ -67,6 +68,9 @@ class Worker:
                 elif msg_dict['message_type'] == 'new_map_task':
                     # once we recieve a new map task, map it
                     self.map_job(msg_dict)
+                elif msg_dict['message_type'] == 'new_reduce_task'
+                    # once we recieve a new reduce task, reduce it
+                    self.reduce_job(msg_dict)
         # now that the worker is dead, join threads
         LOGGER.info('Joining all worker threads')
         for thread in self.threads:
@@ -129,6 +133,48 @@ class Worker:
         }
         # send the message to the manager
         tcp_client(self.manager_host, self.manager_port, message)
+
+
+    def reduce_job(self, message_dict):
+        """In there like swimwear (part 2)."""
+        """{
+            "message_type": "new_reduce_task",
+            "task_id": int,
+            "executable": string,
+            "input_paths": [list of strings],
+            "output_directory": string,
+            "worker_host": string,
+            "worker_port": int
+        }""""
+        executable = message_dict['executable']
+        task_id = message_dict['task_id']
+        o_d = message_dict['output_directory']
+        input_paths = message_dict['input_paths']
+        output_path = o_d+'/'+'part-{0:0=5d}'.format(task_id)
+        files = []
+        for input_path in input_paths:
+            files.append(sorted(open(input_path, 'r')))
+        # input paths
+        with heapq.merge(*files) as infile, open(output_path) as outfile:
+            with subprocess.Popen(
+                [self.executable],
+                universal_newlines=True,
+                stdin=subprocess.PIPE,
+                stdout=outfile,
+            ) as reduce_process:
+                # Pipe input to reduce_process
+                for line in infile:
+                    # run reduce exe.
+                    # write to the output file
+                    reduce_process.stdin.write(line)
+        message = {
+            "message_type": "finished",
+            "task_id": int,
+            "output_paths" : [list of strings],
+            "worker_host": string,
+            "worker_port": int
+        }
+
 
     def udp_client(self):
         """Send worker heartbeats on UDP."""

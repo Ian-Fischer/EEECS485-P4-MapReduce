@@ -87,7 +87,6 @@ case $1 in
         mapreduce stop
         mapreduce start
         ;;
-
     *)
         usage
         exit 1
