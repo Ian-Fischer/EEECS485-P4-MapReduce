@@ -150,6 +150,10 @@ class Manager:
             else:
                 LOGGER.info("Manager:%s end reduce stage", self.port)
                 self.finish_up()
+
+    def finish_up():
+        """Done!"""
+        print('implement me!')
                     
 
     def available_workers(self):
@@ -346,7 +350,7 @@ class Manager:
                 "message_type": "new_reduce_task",
                 "task_id": taskid,
                 "executable": self.curr_job_r[taskid]['executable'],
-                "input_paths": self.curr_job_r[taskid]['input_files'],
+                "input_paths": self.curr_job_r[taskid]['input_paths'],
                 "output_directory": o_d,
                 "worker_host": worker[0],
                 "worker_port": worker[1]
