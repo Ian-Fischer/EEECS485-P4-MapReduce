@@ -151,9 +151,13 @@ class Manager:
                 LOGGER.info("Manager:%s end reduce stage", self.port)
                 self.finish_up()
 
-    def finish_up():
-        """Done!"""
-        print('implement me!')
+    def finish_up(self):
+        if len(self.queue) > 0:
+            self.curr_job = self.queue[0]
+            self.queue.pop(0)
+            # update member variables for new job
+            self.stage = 'map'
+            self.start_stage()
                     
 
     def available_workers(self):
@@ -188,10 +192,10 @@ class Manager:
             partitions.append([])
         for r_f in os.listdir(reduce_fs):
             # partition is the last five digits of the file name
-            task_id = int(r_f[-5:])
+            partition = int(r_f[-5:])
             # add it!
-            partitions[task_id].append(r_f)
-        # now, files are in the right groups
+            partitions[partition].insert(0, str(reduce_fs)+'/'+r_f)
+        # now, files are in the right groups, so we need to sort them
         # then, we create the task messages
         for task_id in range(num_reducers):
             self.curr_job_r[task_id] = {
@@ -270,7 +274,7 @@ class Manager:
         # make intermediate directory
         intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
         intrm_dir_path.mkdir(parents=True, exist_ok=True)
-        msg_dict['intermediate'] = intrm_dir_path
+        msg_dict['intermediate'] = str(intrm_dir_path)
         # get the output directory path
         output_dir_path = pathlib.Path(msg_dict['output_directory'])
         # create the output directory if it does not exist
@@ -396,9 +400,18 @@ class Manager:
             self.stage = 'map'
             self.start_stage()
 
-    def fault(self):
+    def fault(self, worker):
         """Fault tolerance for managers."""
-        print('implement me')
+        if worker['status'] == 'busy':
+            if self.stage == 'map':
+                job = self.curr_job_m
+            else:
+                job = self.curr_job_r
+            for _, partition in job.items():
+                if (partition['worker_host'] == worker[0]) and (partition['worker_post'] == worker[1]):
+                    partition['status'] == 'no'
+            
+        
 
     def udp_server(self, host, port):
         """UDP server code."""
@@ -433,10 +446,10 @@ class Manager:
                 for worker in self.workers.values():
                     if worker['status'] != 'dead':
                         if curr_time - worker['last_checkin'] > 12:
-                            ft_thread = Thread(target=self.fault)
-                            ft_thread.start()
-                            self.threads.append(ft_thread)
-                            worker['status'] = 'dead'
+                            self.fault(worker)
+                            worker['status'] == 'dead'
+
+                            
 
     def shutdown(self):
         """Shutdown manager."""

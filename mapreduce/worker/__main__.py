@@ -103,6 +103,9 @@ class Worker:
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
                 ) as map_process:
+                    open_files = []
+                    for _ in range(message_dict['num_partitions']):
+                        open_files.append(None)
                     for line in map_process.stdout:
                         # split over tab into [key, value]
                         line_list = line.split('\t')
@@ -116,8 +119,13 @@ class Worker:
                         part1 = "maptask{0:0=5d}".format(task_id)
                         part2 = '-part{0:0=5d}'.format(partition)
                         file_path = o_d+'/'+part1+part2
-                        with open(file_path, 'a', encoding='utf-8') as file:
-                            file.write(line)
+                        # if the file we need isn't open, open it
+                        if not open_files[partition]:
+                            open_files[partition] = open(file_path, 'a')
+                        # then, write to it
+                        open_files[partition].write(line)
+                    for file in open_files:
+                        file.close()
         # now we finished writing
         output_paths = []
         for file_name in os.listdir(message_dict['output_directory']):
@@ -156,14 +164,14 @@ class Worker:
         output_path = o_d+'/'+'part-{0:0=5d}'.format(task_id)
         open_files = []
         for input_path in input_paths:
-            with open(input_path, 'r') as FileName:
-                lines = FileName.readlines()
-                lines.sort()
-            with open(input_path, 'w') as FileName:
-                for item in lines:
-                    FileName.write("%s" % item)
+            open_f = open(input_path, 'r+')
+            lines = sorted(open_f)
+            open_f.truncate(0)
+            open_f.seek(0)
+            open_f.writelines(lines)
+            open_f.close()
         for input_path in input_paths:
-            open_files.append(open(input_path))
+            open_files.append(open(input_path, 'r'))
         with open(output_path, 'a') as outfile:
             with subprocess.Popen(
                 [executable],
@@ -175,6 +183,8 @@ class Worker:
                 for line in heapq.merge(*open_files):
                     # run exe on line and write to output
                     reduce_process.stdin.write(line)
+        for files in open_files:
+            files.close()
         # craft a short but meaningful message
         # now that we are done with that, we finished the lines
         message = {
