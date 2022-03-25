@@ -1,6 +1,7 @@
 """See unit test function docstring."""
 
 import multiprocessing
+import time
 from pathlib import Path
 import pytest
 import mapreduce
@@ -74,8 +75,12 @@ def test_wordcount(processes):
         "num_reducers": 1
     }, port=manager_port)
 
-    # Wait for manager to create output
+    # Wait for output to be created
     utils.wait_for_isfile("tmp/test_integration_02/output/part-00000")
+
+    # Give Worker time to finish writing to the output file
+    # HACK: sleep is not a synchronization primitive
+    time.sleep(3)
 
     outfile00 = Path("tmp/test_integration_02/output/part-00000")
     word_count_correct = Path(TESTDATA_DIR/"correct/word_count_correct.txt")

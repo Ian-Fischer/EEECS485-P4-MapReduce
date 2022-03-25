@@ -1,5 +1,4 @@
 """MapReduce framework Manager node."""
-from re import L
 import sys
 import pathlib
 import os
@@ -12,27 +11,6 @@ from threading import Thread
 import click
 from mapreduce.utils import tcp_client, tcp_server
 
-"""
-    On startup manager should:
-
-    Create new folder temp store all files used by mapreduce server)
-    (if already exists keep it (mkdir) ) (Hints on slash an glob in spec)
-
-    Create new thread to listen for UDP heartbeat from workers
-
-    Create additional processing threads we need (fault tolerance also)
-
-    Create TCP socket on given port and call listen()
-    (only one listen() thread for lifetime of manager)
-
-    Wait for incoming messages, ignore invalid (invalid is fail JSON Decoding)
-    try:
-        msg = json.loads(msg)
-    except JSONDecodeError:
-        continue
-
-    Return from Manager constructor when all threads have exited
-"""
 
 # Configure logging
 LOGGER = logging.getLogger(__name__)
@@ -49,18 +27,15 @@ class Manager:
             host, port, hb_port, os.getcwd(),
         )
         # set up dead variable to end threads
-        self.dead = False
         self.job_counter = 0
         self.queue = []
-        self.host = host
-        self.port = port
-        self.hb_port = hb_port
         self.curr_job = {}
         self.curr_job_m = {}
         self.curr_job_r = {}
         self.stage = None
         self.workers = {}
-        self.threads = []
+
+        threads = []
         """
         workers:
         (worker_host, worker_port) =>
@@ -80,7 +55,7 @@ class Manager:
         # set up
         # spwan heart beat thread
         hb_thread = Thread(target=self.udp_server, args=(host, hb_port))
-        self.threads.append(hb_thread)
+        threads.append(hb_thread)
         hb_thread.start()
         # create tcp socket on given port to call listen
         # Create an INET, STREAMing socket, this is TCP
@@ -90,35 +65,32 @@ class Manager:
             sock.bind((host, port))
             sock.listen()
             sock.settimeout(1)
-            while not self.dead:
+            while self.stage != "dead":
                 message_dict = tcp_server(sock)
-                LOGGER.info(f'Current Message: {message_dict}')
                 # do something with the message
                 if message_dict['message_type'] == 'shutdown':
                     self.shutdown()
-                    self.dead = True
+                    self.stage = "dead"
                 # registration
                 elif message_dict["message_type"] == 'register':
                     self.register_worker(message_dict)
                 # new job req.
                 elif message_dict['message_type'] == 'new_manager_job':
                     # manager recieves this when recieve a new job
-                    self.new_job_direc(message_dict, tmp_path)
+                    self.new_job_direc(message_dict, tmp_path, port)
                 elif message_dict['message_type'] == 'finished':
                     # deal with a finished message
-                    self.finished(message_dict)
+                    self.finished(message_dict, port)
         # now that Manager is dead, join all the threads
         LOGGER.info('THREADS joining manager all threads')
-        for thread in self.threads:
-            LOGGER.info(f'THREADS closing thread {thread.name}')
+        for thread in threads:
             thread.join()
         LOGGER.info('Done joining')
 
-    def finished(self, msg_dict):
+    def finished(self, msg_dict, port):
         """Deal with received finished message."""
         # set task to finished, add output paths to the dictionary
         worker = (msg_dict['worker_host'], msg_dict['worker_port'])
-        LOGGER.info(f'Finished task #{msg_dict["task_id"]}')
         if self.stage == 'map':
             task_id = msg_dict['task_id']
             output_paths = msg_dict['output_paths']
@@ -132,7 +104,7 @@ class Manager:
                 if task:
                     self.assign_task(task, worker)
             else:
-                LOGGER.info("Manager:%s, end map stage", self.port)
+                LOGGER.info("Manager:%s, end map stage", port)
                 self.stage = 'reduce'
                 self.start_stage()
         # otherwise we are in reduce
@@ -148,17 +120,18 @@ class Manager:
                 if task:
                     self.assign_task(task, worker)
             else:
-                LOGGER.info("Manager:%s end reduce stage", self.port)
+                LOGGER.info("Manager:%s end reduce stage", port)
                 self.finish_up()
 
     def finish_up(self):
+        """Finishing up a job for Mr. Manager."""
+
         if len(self.queue) > 0:
             self.curr_job = self.queue[0]
             self.queue.pop(0)
             # update member variables for new job
             self.stage = 'map'
             self.start_stage()
-                    
 
     def available_workers(self):
         """Check if there are any available workers."""
@@ -194,7 +167,9 @@ class Manager:
             # partition is the last five digits of the file name
             partition = int(r_f[-5:])
             # add it!
-            partitions[partition].insert(0, str(reduce_fs)+'/'+r_f)
+            partitions[partition].append(str(reduce_fs)+'/'+r_f)
+        for partition in partitions:
+            partition.sort()
         # now, files are in the right groups, so we need to sort them
         # then, we create the task messages
         for task_id in range(num_reducers):
@@ -206,7 +181,6 @@ class Manager:
                 "worker_host": None,
                 "worker_port": None
             }
-        LOGGER.info(f'Done partitioning: {self.curr_job_r}')
 
     def partition_mapper(self):
         """Partition files and create curr_job_m."""
@@ -232,18 +206,17 @@ class Manager:
                 "worker_host": None,
                 "worker_port": None
             }
-        LOGGER.info(f'Done partitioning: {self.curr_job_m}')
 
-    def start_stage(self):
-        """Executes current job map stage."""
+    def start_stage(self, port):
+        """Execute current job map stage."""
         if self.stage == 'map':
-            LOGGER.info("Manager:%s, begin map stage", self.port)
+            LOGGER.info("Manager:%s, begin map stage", port)
             # 1. partition the input
             self.partition_mapper()
         else:
-            """Start the reduce stage."""
+            # Start the reduce stage
             # log that we are starting
-            LOGGER.info("Manager:%s begin reduce stage", self.port)
+            LOGGER.info("Manager:%s begin reduce stage", port)
             # in the map stage, we made num_reducers parts
             # so, we should split the files pased of their part #
             # and we will assign those to workers as they come
@@ -258,19 +231,8 @@ class Manager:
                 if taskid is not None:
                     self.assign_task(taskid=taskid, worker=key)
 
-    def new_job_direc(self, msg_dict, tmp_path):
+    def new_job_direc(self, msg_dict, tmp_path, port):
         """Handle a new job request."""
-        """
-        {
-            "message_type": "new_manager_job",
-            "input_directory": string,
-            "output_directory": string,
-            "mapper_executable": string,
-            "reducer_executable": string,
-            "num_mappers" : int,
-            "num_reducers" : int
-        }
-        """
         # make intermediate directory
         intrm_dir_path = tmp_path / f"job-{self.job_counter}" / "intermediate"
         intrm_dir_path.mkdir(parents=True, exist_ok=True)
@@ -286,23 +248,12 @@ class Manager:
             # update member variables
             self.stage = 'map'
             self.curr_job = msg_dict
-            self.start_stage()
+            self.start_stage(port)
         else:
             self.queue.append(msg_dict)
 
     def work(self):
         """Check if there are any unassigned partitions in curr_job."""
-        """
-        (taskid)
-        {
-            "status": {no, busy, done}
-            "input_files": []
-            "executable": <executable>
-            "output_dir": <directory>
-            "worker_host": assigned worker host
-            "worker_port": assigned worker port
-        }
-        """
         if self.stage == 'map':
             partitions = self.curr_job_m
         else:
@@ -314,17 +265,6 @@ class Manager:
 
     def assign_task(self, taskid, worker):
         """Assign a task to a worker."""
-        """
-        (taskid)
-        {
-            "status": {no, busy, done}
-            "input_files": []
-            "executable": <executable>
-            "output_dir": <directory>
-            "worker_host": assigned worker host
-            "worker_port": assigned worker port
-        }
-        """
         if self.stage == 'map':
             # create the message
             o_d = self.curr_job_m[taskid]['output_directory']
@@ -345,7 +285,7 @@ class Manager:
             self.curr_job_m[taskid]['worker_port'] = worker[1]
             self.curr_job_m[taskid]['status'] = 'busy'
             self.workers[worker]['status'] = 'busy'
-            LOGGER.info(f'Worker (host,port)={worker} assigned task #{taskid}')
+
         elif self.stage == 'reduce':
             # create the message
             o_d = self.curr_job_r[taskid]['output_directory']
@@ -366,17 +306,15 @@ class Manager:
             self.curr_job_r[taskid]['worker_port'] = worker[1]
             self.curr_job_r[taskid]['status'] = 'busy'
             self.workers[worker]['status'] = 'busy'
-            LOGGER.info(f'Worker (host,port)={worker} assigned task #{taskid}')
 
     def register_worker(self, msg_dict):
-        """Adds worker to manager's worker dict."""
+        """Add worker to manager's worker dict."""
         # put the worker in our dictionary (time and info)
         host, port = msg_dict['worker_host'], msg_dict['worker_port']
         self.workers[(host, port)] = {
             'last_checkin': time.time(),
             'status': 'ready'
         }
-        LOGGER.info(f'Registered new worker, host:{host} port: {port}')
         # send an ack to the worker
         reg_ack = {
             "message_type": "register_ack",
@@ -400,18 +338,33 @@ class Manager:
             self.stage = 'map'
             self.start_stage()
 
-    def fault(self, worker):
+    def fault(self, host_port, worker):
         """Fault tolerance for managers."""
         if worker['status'] == 'busy':
             if self.stage == 'map':
                 job = self.curr_job_m
             else:
                 job = self.curr_job_r
-            for _, partition in job.items():
-                if (partition['worker_host'] == worker[0]) and (partition['worker_post'] == worker[1]):
-                    partition['status'] == 'no'
-            
-        
+            taskid = None
+            for key, partition in job.items():
+                p_host = partition['worker_host'], 
+                p_port = partition['worker_port']
+                w_host, w_port = host_port[0], host_port[1]
+                if p_host == w_host and p_port == w_port:
+                    partition['status'] = 'no'
+                    taskid = key
+            # check for available workers in case
+            # all other jobs are done
+            busy = 0
+            for val in self.workers.values():
+                busy += val['status'] == 'busy'
+            # if this was the only worker doing anything
+            if busy == 1:
+                # then reassign the work
+                for key, val in self.workers.items():
+                    if val['status'] == 'ready':
+                        self.assign_task(taskid, key)
+                        break
 
     def udp_server(self, host, port):
         """UDP server code."""
@@ -423,7 +376,7 @@ class Manager:
             sock.settimeout(1)
             # No sock.listen() since UDP doesn't establish connections like TCP
             # Receive incoming UDP messages
-            while not self.dead:
+            while self.stage != "dead":
                 try:
                     message_bytes = sock.recv(4096)
                 except socket.timeout:
@@ -438,18 +391,16 @@ class Manager:
                 key = (message_dict['worker_host'],
                        message_dict['worker_port'])
                 # ignore if not registered
-                if key not in self.workers.keys():
+                if key not in self.workers:
                     continue
                 self.workers[key]['last_checkin'] = time.time()
                 # update worker times and check for death after message
                 curr_time = time.time()
-                for worker in self.workers.values():
+                for host_port, worker in self.workers.items():
                     if worker['status'] != 'dead':
                         if curr_time - worker['last_checkin'] > 12:
-                            self.fault(worker)
-                            worker['status'] == 'dead'
-
-                            
+                            self.fault(host_port, worker)
+                            worker['status'] = 'dead'
 
     def shutdown(self):
         """Shutdown manager."""
@@ -457,12 +408,13 @@ class Manager:
         msg = {
             'message_type': 'shutdown'
         }
-        for key, _ in self.workers.items():
-            # get workers host and port
-            server_host, server_port = key[0], key[1]
-            # send the message
-            tcp_client(server_host, server_port, msg)
-            self.workers[key]['status'] = 'dead'
+        for key, worker in self.workers.items():
+            if worker['status'] != 'dead':
+                # get workers host and port
+                server_host, server_port = key[0], key[1]
+                # send the message
+                tcp_client(server_host, server_port, msg)
+                worker['status'] = 'dead'
         # kill the manager process
 
 

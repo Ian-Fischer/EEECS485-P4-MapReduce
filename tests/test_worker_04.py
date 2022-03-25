@@ -15,7 +15,7 @@ def manager_message_generator(mock_socket):
     yield json.dumps({
         "message_type": "register_ack",
         "worker_host": "localhost",
-        "worker_port": 3001,
+        "worker_port": 6001,
     }).encode('utf-8')
     yield None
 
@@ -31,7 +31,7 @@ def manager_message_generator(mock_socket):
         "output_directory": "tmp/test_worker_04/output",
         "num_partitions": 1,
         "worker_host": "localhost",
-        "worker_port": 3001,
+        "worker_port": 6001,
     }, cls=utils.PathJSONEncoder).encode("utf-8")
     yield None
 

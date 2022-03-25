@@ -23,7 +23,7 @@ def tcp_client(server_host, server_port, msg):
 
 
 def tcp_server(sock):
-    """Runs the infinite listen."""
+    """Run the infinite listen."""
     while True:
         # Wait for a connection for 1s.  The socket library avoids consuming
         # CPU while waiting for a connection.

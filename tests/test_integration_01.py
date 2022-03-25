@@ -2,6 +2,7 @@
 
 import filecmp
 import multiprocessing
+import time
 import pytest
 import mapreduce
 import utils
@@ -74,8 +75,12 @@ def test_grep(processes):
         "num_reducers": 1
     }, port=manager_port)
 
-    # Wait for manager to create output
+    # Wait for output to be created
     utils.wait_for_isfile("tmp/test_integration_01/output/part-00000")
+
+    # Give Worker time to finish writing to the output file
+    # HACK: sleep is not a synchronization primitive
+    time.sleep(3)
 
     # Verify final output file contents
     assert filecmp.cmp(

@@ -19,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 
 class Worker:
     """A class representing a worker node in a MapReduce cluster."""
-    
+
     def __init__(self, host, port, manager_host, manager_port,
                  manager_hb_port):
         """Construct a Worker instance and start listening for messages."""
@@ -37,7 +37,6 @@ class Worker:
         self.port = port
         self.manager_host = manager_host
         self.manager_port = manager_port
-        self.manager_hb_port = manager_hb_port
         self.threads = []
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -61,7 +60,7 @@ class Worker:
                 # registration message
                 elif msg_dict['message_type'] == 'register_ack':
                     # once we get the ack, set up the heartbeat thread
-                    hb_thread = Thread(target=self.udp_client)
+                    hb_thread = Thread(target=self.udp_client, args=(manager_hb_port,))
                     self.threads.append(hb_thread)
                     hb_thread.start()
                     self.ackd = True
@@ -72,33 +71,16 @@ class Worker:
                     # once we recieve a new reduce task, reduce it
                     self.reduce_job(msg_dict)
         # now that the worker is dead, join threads
-        LOGGER.info('Joining all worker threads')
         for thread in self.threads:
-            LOGGER.info(f'Joining thread {thread.name}')
             thread.join()
 
     def map_job(self, message_dict):
         """In there like swimwear."""
-        """
-        msg_dict = {
-            "message_type": "new_map_task",
-            "task_id": int,
-            "input_paths": [list of strings],
-            "executable": string,
-            "output_directory": string,
-            "num_partitions": int,
-            "worker_host": string,
-            "worker_port": int
-        }
-        """
-
-        executable = message_dict['executable']
-        input_paths = message_dict['input_paths']
         # input paths
-        for input_path in input_paths:
+        for input_path in message_dict["input_paths"]:
             with open(input_path, encoding='utf-8') as infile:
                 with subprocess.Popen(
-                    [executable],
+                    [message_dict["executable"]],
                     stdin=infile,
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
@@ -109,29 +91,29 @@ class Worker:
                     for line in map_process.stdout:
                         # split over tab into [key, value]
                         line_list = line.split('\t')
-                        key = line_list[0]
-                        o_d = message_dict['output_directory']
                         # Add line to correct partition output file
-                        hexd = hashlib.md5(key.encode("utf-8")).hexdigest()
-                        keyhash = int(hexd, base=16)
-                        partition = keyhash % message_dict['num_partitions']
+                        hexd = hashlib.md5(line_list[0].encode("utf-8")).hexdigest()
+                        partition = int(hexd, base=16) % message_dict['num_partitions']
                         task_id = message_dict['task_id']
-                        part1 = "maptask{0:0=5d}".format(task_id)
-                        part2 = '-part{0:0=5d}'.format(partition)
-                        file_path = o_d+'/'+part1+part2
+                        part1 = f'maptask{task_id:0=5d}'
+                        part2 = f'-part{partition:0=5d}'
+                        file_path = message_dict['output_directory']+'/'+part1+part2
                         # if the file we need isn't open, open it
                         if not open_files[partition]:
                             open_files[partition] = open(file_path, 'a')
                         # then, write to it
                         open_files[partition].write(line)
                     for file in open_files:
-                        file.close()
+                        if file:
+                            file.close()
         # now we finished writing
         output_paths = []
         for file_name in os.listdir(message_dict['output_directory']):
             # check if maptask{taskid} is in the filename, we did it
             if part1 in file_name:
-                output_paths.append(message_dict['output_directory']+'/'+file_name)
+                o_p = message_dict['output_directory']+'/'+file_name
+                output_paths.append(o_p)
+        output_paths.sort()
         # craft a short but meaningful message
         message = {
             "message_type": "finished",
@@ -142,7 +124,6 @@ class Worker:
         }
         # send the message to the manager
         tcp_client(self.manager_host, self.manager_port, message)
-
 
     def reduce_job(self, message_dict):
         """
@@ -161,7 +142,7 @@ class Worker:
         task_id = message_dict['task_id']
         o_d = message_dict['output_directory']
         input_paths = message_dict['input_paths']
-        output_path = o_d+'/'+'part-{0:0=5d}'.format(task_id)
+        output_path = o_d+'/'+f'part-{task_id:0=5d}'
         open_files = []
         for input_path in input_paths:
             open_f = open(input_path, 'r+')
@@ -171,8 +152,8 @@ class Worker:
             open_f.writelines(lines)
             open_f.close()
         for input_path in input_paths:
-            open_files.append(open(input_path, 'r'))
-        with open(output_path, 'a') as outfile:
+            open_files.append(open(input_path, 'r', encoding='utf-8'))
+        with open(output_path, 'a', encoding='utf-8') as outfile:
             with subprocess.Popen(
                 [executable],
                 universal_newlines=True,
@@ -190,14 +171,14 @@ class Worker:
         message = {
             "message_type": "finished",
             "task_id": task_id,
-            "output_paths" : [output_path],
+            "output_paths": [output_path],
             "worker_host": self.host,
             "worker_port": self.port
         }
         # send the message to the manager
         tcp_client(self.manager_host, self.manager_port, message)
 
-    def udp_client(self):
+    def udp_client(self, manager_hb_port):
         """Send worker heartbeats on UDP."""
         heartbeat = {
             "message_type": "heartbeat",
@@ -208,7 +189,7 @@ class Worker:
             # Create an INET, DGRAM socket, this is UDP
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 # Connect to the UDP socket on server
-                sock.connect((self.manager_host, self.manager_hb_port))
+                sock.connect((self.manager_host, manager_hb_port))
                 # Send a message
                 message = json.dumps(heartbeat)
                 sock.sendall(message.encode('utf-8'))

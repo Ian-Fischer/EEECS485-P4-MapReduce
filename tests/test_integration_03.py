@@ -2,6 +2,7 @@
 
 import os
 import multiprocessing
+import time
 from pathlib import Path
 import pytest
 import mapreduce
@@ -75,11 +76,15 @@ def test_many_mappers(processes):
         "num_reducers": 2
     }, port=manager_port)
 
-    # Wait for manager to create output
+    # Wait for output to be created
     utils.wait_for_isfile(
         "tmp/test_integration_03/output/part-00000",
         "tmp/test_integration_03/output/part-00001",
     )
+
+    # Give Worker time to finish writing to the output file
+    # HACK: sleep is not a synchronization primitive
+    time.sleep(3)
 
     # Verify number of files
     assert len(os.listdir("tmp/test_integration_03/output")) == 2
