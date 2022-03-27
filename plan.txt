@@ -70,3 +70,14 @@ Fault Taulerance
         "worker_port": assigned worker port
     }
 """
+
+worker, reduce_job:
+        {
+            "message_type": "new_reduce_task",
+            "task_id": int,
+            "executable": string,
+            "input_paths": [list of strings],
+            "output_directory": string,
+            "worker_host": string,
+            "worker_port": int
+        }

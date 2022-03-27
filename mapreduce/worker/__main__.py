@@ -4,17 +4,44 @@ import os
 import logging
 import json
 import heapq
+import contextlib
 import time
 import socket
 from threading import Thread
-import hashlib
 import subprocess
 import click
-from mapreduce.utils import tcp_server, tcp_client
+from mapreduce.utils import tcp_server, tcp_client, hash_line
 
 
 # Configure logging
 LOGGER = logging.getLogger(__name__)
+
+
+def map_job_loop(map_process, msg_d, files):
+    """Run the loop mapping."""
+    with contextlib.ExitStack() as stack:
+        task_id = -1
+        for line in map_process.stdout:
+            # Add line to correct partition output file
+            file_p, part, task_id = hash_line(line, msg_d)
+            # if the file we need isn't open, open it
+            if not files[part]:
+                tmp = stack.enter_context(open(file_p, 'a', encoding='utf-8'))
+                files[part] = tmp
+            # then, write to it
+            files[part].write(line)
+        return task_id
+
+
+def reduce_file_sort(input_path):
+    """Sort and write to each file for reduce."""
+    with contextlib.ExitStack() as stack:
+        open_f = stack.enter_context(open(input_path, 'r+', encoding='utf-8'))
+        lines = sorted(open_f)
+        open_f.truncate(0)
+        open_f.seek(0)
+        open_f.writelines(lines)
+        open_f.close()
 
 
 class Worker:
@@ -60,7 +87,8 @@ class Worker:
                 # registration message
                 elif msg_dict['message_type'] == 'register_ack':
                     # once we get the ack, set up the heartbeat thread
-                    hb_thread = Thread(target=self.udp_client, args=(manager_hb_port,))
+                    hb_thread = Thread(target=self.udp_client,
+                                       args=(manager_hb_port,))
                     self.threads.append(hb_thread)
                     hb_thread.start()
                     self.ackd = True
@@ -74,50 +102,33 @@ class Worker:
         for thread in self.threads:
             thread.join()
 
-    def map_job(self, message_dict):
+    def map_job(self, msg_d):
         """In there like swimwear."""
         # input paths
-        for input_path in message_dict["input_paths"]:
+        for input_path in msg_d["input_paths"]:
             with open(input_path, encoding='utf-8') as infile:
                 with subprocess.Popen(
-                    [message_dict["executable"]],
+                    [msg_d["executable"]],
                     stdin=infile,
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
                 ) as map_process:
-                    open_files = []
-                    for _ in range(message_dict['num_partitions']):
-                        open_files.append(None)
-                    for line in map_process.stdout:
-                        # split over tab into [key, value]
-                        line_list = line.split('\t')
-                        # Add line to correct partition output file
-                        hexd = hashlib.md5(line_list[0].encode("utf-8")).hexdigest()
-                        partition = int(hexd, base=16) % message_dict['num_partitions']
-                        task_id = message_dict['task_id']
-                        part1 = f'maptask{task_id:0=5d}'
-                        part2 = f'-part{partition:0=5d}'
-                        file_path = message_dict['output_directory']+'/'+part1+part2
-                        # if the file we need isn't open, open it
-                        if not open_files[partition]:
-                            open_files[partition] = open(file_path, 'a')
-                        # then, write to it
-                        open_files[partition].write(line)
-                    for file in open_files:
-                        if file:
-                            file.close()
+                    files = []
+                    for _ in range(msg_d['num_partitions']):
+                        files.append(None)
+                    task_id = map_job_loop(map_process, msg_d, files)
         # now we finished writing
         output_paths = []
-        for file_name in os.listdir(message_dict['output_directory']):
+        for file_name in os.listdir(msg_d['output_directory']):
             # check if maptask{taskid} is in the filename, we did it
-            if part1 in file_name:
-                o_p = message_dict['output_directory']+'/'+file_name
+            if f'maptask{task_id:0=5d}' in file_name:
+                o_p = msg_d['output_directory']+'/'+file_name
                 output_paths.append(o_p)
         output_paths.sort()
         # craft a short but meaningful message
         message = {
             "message_type": "finished",
-            "task_id": message_dict['task_id'],
+            "task_id": msg_d['task_id'],
             "output_paths": output_paths,
             "worker_host": self.host,
             "worker_port": self.port
@@ -126,46 +137,30 @@ class Worker:
         tcp_client(self.manager_host, self.manager_port, message)
 
     def reduce_job(self, message_dict):
-        """
-        In there like swimwear (part 2).
-        {
-            "message_type": "new_reduce_task",
-            "task_id": int,
-            "executable": string,
-            "input_paths": [list of strings],
-            "output_directory": string,
-            "worker_host": string,
-            "worker_port": int
-        }
-        """
-        executable = message_dict['executable']
+        """In there like swimwear (part 2)."""
         task_id = message_dict['task_id']
-        o_d = message_dict['output_directory']
-        input_paths = message_dict['input_paths']
-        output_path = o_d+'/'+f'part-{task_id:0=5d}'
+        output_path = message_dict['output_directory']
+        output_path = output_path+'/'+f'part-{task_id:0=5d}'
         open_files = []
-        for input_path in input_paths:
-            open_f = open(input_path, 'r+')
-            lines = sorted(open_f)
-            open_f.truncate(0)
-            open_f.seek(0)
-            open_f.writelines(lines)
-            open_f.close()
-        for input_path in input_paths:
-            open_files.append(open(input_path, 'r', encoding='utf-8'))
-        with open(output_path, 'a', encoding='utf-8') as outfile:
-            with subprocess.Popen(
-                [executable],
-                universal_newlines=True,
-                stdin=subprocess.PIPE,
-                stdout=outfile,
-            ) as reduce_process:
-                # Pipe input to reduce_process
-                for line in heapq.merge(*open_files):
-                    # run exe on line and write to output
-                    reduce_process.stdin.write(line)
-        for files in open_files:
-            files.close()
+        for i_path in message_dict['input_paths']:
+            reduce_file_sort(i_path)
+        with contextlib.ExitStack() as stack:
+            for i_path in message_dict['input_paths']:
+                file = stack.enter_context(open(i_path, 'r', encoding='utf-8'))
+                open_files.append(file)
+            with open(output_path, 'a', encoding='utf-8') as outfile:
+                with subprocess.Popen(
+                    [message_dict['executable']],
+                    universal_newlines=True,
+                    stdin=subprocess.PIPE,
+                    stdout=outfile,
+                ) as reduce_process:
+                    # Pipe input to reduce_process
+                    for line in heapq.merge(*open_files):
+                        # run exe on line and write to output
+                        reduce_process.stdin.write(line)
+            for files in open_files:
+                files.close()
         # craft a short but meaningful message
         # now that we are done with that, we finished the lines
         message = {

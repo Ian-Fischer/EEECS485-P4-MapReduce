@@ -7,7 +7,7 @@ Socket stuff
 import socket
 import json
 import logging
-
+from hashlib import md5
 LOGGER = logging.getLogger(__name__)
 
 
@@ -50,7 +50,19 @@ def tcp_server(sock):
         message_bytes = b''.join(message_chunks)
         message_str = message_bytes.decode("utf-8")
         try:
+            # i am trying to get the thing
             message_dict = json.loads(message_str)
         except json.JSONDecodeError:
+            LOGGER.info('exception, JSONDecodeError')
             continue
         return message_dict
+
+
+def hash_line(line, msg_d):
+    """Hash line of function."""
+    thing = line.split('\t')[0].encode('utf-8')
+    hexd = md5(thing).hexdigest()
+    part = int(hexd, base=16) % msg_d['num_partitions']
+    task_id = msg_d['task_id']
+    end = f'/maptask{task_id:0=5d}'+f'-part{part:0=5d}'
+    return msg_d['output_directory']+end, part, task_id

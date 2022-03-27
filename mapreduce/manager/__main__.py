@@ -62,8 +62,11 @@ class Manager:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # this is a comment
             sock.bind((host, port))
+            LOGGER.info('opening the socket')
             sock.listen()
+            LOGGER.info('listening, doing timeout next')
             sock.settimeout(1)
             while self.stage != "dead":
                 message_dict = tcp_server(sock)
@@ -106,7 +109,7 @@ class Manager:
             else:
                 LOGGER.info("Manager:%s, end map stage", port)
                 self.stage = 'reduce'
-                self.start_stage()
+                self.start_stage(port)
         # otherwise we are in reduce
         else:
             task_id = msg_dict['task_id']
@@ -125,7 +128,6 @@ class Manager:
 
     def finish_up(self):
         """Finishing up a job for Mr. Manager."""
-
         if len(self.queue) > 0:
             self.curr_job = self.queue[0]
             self.queue.pop(0)
@@ -347,7 +349,7 @@ class Manager:
                 job = self.curr_job_r
             taskid = None
             for key, partition in job.items():
-                p_host = partition['worker_host'], 
+                p_host = partition['worker_host']
                 p_port = partition['worker_port']
                 w_host, w_port = host_port[0], host_port[1]
                 if p_host == w_host and p_port == w_port:
