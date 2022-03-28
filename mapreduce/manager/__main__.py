@@ -36,16 +36,6 @@ class Manager:
         self.workers = {}
 
         threads = []
-        """
-        workers:
-        (worker_host, worker_port) =>
-        {
-            last_checkin : time
-            status : {ready, busy, dead}
-        }
-
-        threads: [hb_thread, listen_thread, ft_thread]
-        """
         # set up tmp directory in mapreduce (mapreduce/tmp)
         tmp_path = pathlib.Path("tmp")
         tmp_path.mkdir(exist_ok=True)
@@ -134,6 +124,8 @@ class Manager:
             # update member variables for new job
             self.stage = 'map'
             self.start_stage()
+        else:
+            self.curr_job = None
 
     def available_workers(self):
         """Check if there are any available workers."""
@@ -170,6 +162,7 @@ class Manager:
             partition = int(r_f[-5:])
             # add it!
             partitions[partition].append(str(reduce_fs)+'/'+r_f)
+        # sort all of the files
         for partition in partitions:
             partition.sort()
         # now, files are in the right groups, so we need to sort them
@@ -400,7 +393,7 @@ class Manager:
                 curr_time = time.time()
                 for host_port, worker in self.workers.items():
                     if worker['status'] != 'dead':
-                        if curr_time - worker['last_checkin'] > 12:
+                        if curr_time - worker['last_checkin'] >= 10:
                             self.fault(host_port, worker)
                             worker['status'] = 'dead'
 
